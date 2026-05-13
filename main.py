@@ -130,6 +130,11 @@ class SubtitleVLMApp(QMainWindow):
         self.init_ui()
         self.current_analysis = []
 
+    def closeEvent(self, event):
+        """프로그램 종료 시 설정을 저장합니다."""
+        self.save_settings()
+        event.accept()
+
     def init_ui(self):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -187,6 +192,10 @@ class SubtitleVLMApp(QMainWindow):
         file_btns.addWidget(btn_add_file)
         file_btns.addWidget(btn_add_folder)
         left_panel.addLayout(file_btns)
+
+        btn_remove_file = QPushButton("Remove Selected")
+        btn_remove_file.clicked.connect(self.remove_selected_file)
+        left_panel.addWidget(btn_remove_file)
 
         self.start_btn = QPushButton("Start Analysis")
         self.start_btn.setMinimumHeight(50)
