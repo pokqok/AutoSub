@@ -21,21 +21,30 @@ class VLMClient:
 
     def analyze_frame(self, image_path: str, custom_prompt: str = "") -> Optional[Dict[str, Any]]:
         """
-        단일 프레임을 분석하여 일본어 원문, 한국어 번역문, 그리고 텍스트의 색상 정보를 추출합니다.
+        단일 프레임을 분석하여 모든 대사를 리스트 형태로 추출합니다.
         """
         base64_image = self._encode_image(image_path)
         
         core_instruction = (
-            "Analyze this Japanese video frame. Identify all text that is clearly 'spoken dialogue'. "
-            "Differentiate it from background text, logos, UI, or sound effects. "
-            "Return only a JSON object. If no dialogue is found, return {'is_dialogue': false}. "
-            "If found, return the following JSON format:\n"
+            "Analyze this Japanese video frame. Identify ALL text that are character's spoken dialogues. "
+            "Differentiate them from background text, logos, UI, or sound effects. "
+            "Return ONLY a JSON object. If no dialogue is found, return {'dialogues': []}. "
+            "If dialogue is found, return exactly in this JSON format:\n"
             "{\n"
-            "  \"is_dialogue\": true,\n"
-            "  \"original\": \"Japanese text\",\n"
-            "  \"translated\": \"Korean translation\",\n"
-            "  \"color\": \"HEX color code of the text (e.g. #FFFFFF)\",\n"
-            "  \"position\": \"text position (e.g. bottom-center, top-left)\"\n"
+            "  \"dialogues\": [\n"
+            "    {\n"
+            "      \"original\": \"Japanese text 1\",\n"
+            "      \"translated\": \"Korean translation 1\",\n"
+            "      \"color\": \"HEX color code (#RRGGBB)\",\n"
+            "      \"position\": \"position on screen\"\n"
+            "    },\n"
+            "    {\n"
+            "      \"original\": \"Japanese text 2\",\n"
+            "      \"translated\": \"Korean translation 2\",\n"
+            "      \"color\": \"HEX color code (#RRGGBB)\",\n"
+            "      \"position\": \"position on screen\"\n"
+            "    }\n"
+            "  ]\n"
             "}"
         )
 
@@ -55,6 +64,21 @@ class VLMClient:
             "response_format": {"type": "json_object"},
             "temperature": 0.0
         }
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}"
+        }
+
+        try:
+            response = requests.post(f"{self.base_url}/chat/completions", headers=headers, json=payload, timeout=60)
+            response.raise_for_status()
+            result = response.json()
+            content = result['choices'][0]['message']['content']
+            return json.loads(content)
+        except Exception as e:
+            print(f"VLM Error ({image_path}): {e}")
+            return None
 
         headers = {
             "Content-Type": "application/json",
