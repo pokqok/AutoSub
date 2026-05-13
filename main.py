@@ -172,6 +172,26 @@ class SubtitleVLMApp(QMainWindow):
         self.url_input = self.create_setting_row(settings_group, "API Base URL:", self.settings.get('base_url', 'https://api.deepseek.com'))
         self.key_input = self.create_setting_row(settings_group, "API Key:", self.settings.get('api_key', ''), is_password=True)
         
+        # Preset 선택 UI
+        preset_layout = QHBoxLayout()
+        preset_layout.addWidget(QLabel("Preset:"))
+        self.preset_combo = QComboBox()
+        self.preset_combo.setMinimumWidth(150)
+        self.preset_combo.currentTextChanged.connect(self.load_preset)
+        preset_layout.addWidget(self.preset_combo)
+        
+        btn_save_preset = QPushButton("💾 Save")
+        btn_save_preset.setToolTip("Save current URL/Model/Prompt as a preset (API Key is NEVER saved)")
+        btn_save_preset.clicked.connect(self.save_preset_dialog)
+        preset_layout.addWidget(btn_save_preset)
+        
+        btn_del_preset = QPushButton("🗑️ Delete")
+        btn_del_preset.clicked.connect(self.delete_preset)
+        preset_layout.addWidget(btn_del_preset)
+        
+        settings_group.addLayout(preset_layout)
+        self._refresh_presets()
+        
         model_layout = QHBoxLayout()
         model_layout.addWidget(QLabel("Model Name:"))
         self.model_input = QLineEdit(self.settings.get('model_name', 'gemma-4-31b'))
@@ -374,6 +394,82 @@ class SubtitleVLMApp(QMainWindow):
                     f.write(text)
         except Exception as e:
             self.log_window.append(f"Error saving glossary: {e}")
+
+    def _refresh_presets(self):
+        """presets.json에서 프리셋 목록을 불러와 콤보박스에 채움"""
+        self.preset_combo.clear()
+        self.preset_combo.addItem("— Select Preset —")
+        presets = self._load_presets()
+        for name in sorted(presets.keys()):
+            self.preset_combo.addItem(name)
+        
+    def _load_presets(self) -> dict:
+        if os.path.exists("presets.json"):
+            try:
+                with open("presets.json", "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                return {}
+        return {}
+    
+    def _save_presets(self, presets: dict):
+        with open("presets.json", "w", encoding="utf-8") as f:
+            json.dump(presets, f, ensure_ascii=False, indent=2)
+    
+    def save_preset_dialog(self):
+        """현재 입력된 URL/모델/프롬프트를 프리셋으로 저장 (API Key는 절대 저장 안 함)"""
+        from PySide6.QtWidgets import QInputDialog
+        name, ok = QInputDialog.getText(self, "Save Preset", "Preset name:")
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        presets = self._load_presets()
+        presets[name] = {
+            "base_url": self.url_input.text(),
+            "model_name": self.model_input.text(),
+            "custom_prompt": self.prompt_input.toPlainText(),
+            "ocr_engine": self.ocr_engine_combo.currentText(),
+            "ocr_interval": float(self.interval_combo.currentText()),
+            "output_format": self.output_format_combo.currentText()
+        }
+        self._save_presets(presets)
+        self._refresh_presets()
+        self.preset_combo.setCurrentText(name)
+        self.add_log(f"Preset saved: {name}")
+    
+    def load_preset(self, name: str):
+        """프리셋 선택 시 UI 필드를 채움"""
+        if name == "— Select Preset —" or not name:
+            return
+        presets = self._load_presets()
+        p = presets.get(name)
+        if not p:
+            return
+        if p.get("base_url"):
+            self.url_input.setText(p["base_url"])
+        if p.get("model_name"):
+            self.model_input.setText(p["model_name"])
+        if p.get("custom_prompt") is not None:
+            self.prompt_input.setPlainText(p["custom_prompt"])
+        if p.get("ocr_engine"):
+            self.ocr_engine_combo.setCurrentText(p["ocr_engine"])
+        if p.get("ocr_interval"):
+            self.interval_combo.setCurrentText(str(p["ocr_interval"]))
+        if p.get("output_format"):
+            self.output_format_combo.setCurrentText(p["output_format"])
+        self.add_log(f"Preset loaded: {name}")
+    
+    def delete_preset(self):
+        """선택된 프리셋 삭제"""
+        name = self.preset_combo.currentText()
+        if name == "— Select Preset —" or not name:
+            return
+        presets = self._load_presets()
+        if name in presets:
+            del presets[name]
+            self._save_presets(presets)
+            self._refresh_presets()
+            self.add_log(f"Preset deleted: {name}")
 
     def load_settings(self):
         if os.path.exists(CONFIG_FILE):

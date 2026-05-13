@@ -3,6 +3,7 @@
 __pycache__/
 *.log
 config.json
+presets.json
 .vs/
 .vscode/
 *.egg-info/
