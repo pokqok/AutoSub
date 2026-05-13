@@ -111,3 +111,36 @@ class VLMClient:
         except (requests.RequestException, KeyError, json.JSONDecodeError) as e:
             # 네트워크 오류, 응답 구조 오류 등
             raise Exception(f"VLM Request/Parse Error: {str(e)}") from e
+
+    def test_connection(self) -> str:
+        """
+        API 연결 상태를 text-only 메시지로 빠르게 확인합니다.
+        성공하면 응답 텍스트를, 실패하면 Exception을 raise합니다.
+        """
+        payload = {
+            "model": self.model_name,
+            "messages": [
+                {"role": "user", "content": "Say exactly 'OK' and nothing else."}
+            ],
+            "temperature": 0.0,
+            "max_tokens": 10
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}"
+        }
+
+        try:
+            response = requests.post(
+                f"{self.base_url}/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=30
+            )
+            if response.status_code != 200:
+                raise Exception(f"HTTP {response.status_code}: {response.text[:500]}")
+            result = response.json()
+            content = result['choices'][0]['message']['content']
+            return content.strip()
+        except (requests.RequestException, KeyError, json.JSONDecodeError) as e:
+            raise Exception(f"API Connection Test Failed: {str(e)}") from e

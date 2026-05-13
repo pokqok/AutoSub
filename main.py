@@ -45,6 +45,17 @@ class AnalysisWorker(QThread):
                 return
 
             client = VLMClient(api_key, model_name, base_url)
+            
+            # 샘플링 전 API 연결 사전 테스트
+            self.log.emit("Pre-flight API connection test...")
+            try:
+                _ = client.test_connection()
+                self.log.emit("  -> API connection verified.")
+            except Exception as e:
+                self.error.emit(f"API Connection Test Failed BEFORE sampling:\n{str(e)}\n\n"
+                                f"Please fix your API Key, URL, or Model Name before starting analysis.")
+                return
+            
             sampler = SubtitleSampler()
             exporter = SubtitleExporter()
             
@@ -232,6 +243,11 @@ class SubtitleVLMApp(QMainWindow):
         btn_remove_file.clicked.connect(self.remove_selected_file)
         left_panel.addWidget(btn_remove_file)
 
+        btn_test_api = QPushButton("Test API Connection")
+        btn_test_api.setStyleSheet("background-color: #1565c0; color: white;")
+        btn_test_api.clicked.connect(self.test_api_connection)
+        left_panel.addWidget(btn_test_api)
+
         self.start_btn = QPushButton("Start Analysis")
         self.start_btn.setMinimumHeight(50)
         self.start_btn.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold;")
@@ -378,6 +394,42 @@ class SubtitleVLMApp(QMainWindow):
         }
         with open(CONFIG_FILE, "w") as f:
             json.dump(self.settings, f)
+
+    def test_api_connection(self):
+        """현재 설정값으로 API 연결을 빠르게 테스트합니다."""
+        self.save_settings()
+        api_key = self.settings.get('api_key', '')
+        model_name = self.settings.get('model_name', '')
+        base_url = self.settings.get('base_url', '')
+
+        if not api_key:
+            QMessageBox.warning(self, "API Test", "API Key is missing!")
+            return
+        if not base_url:
+            QMessageBox.warning(self, "API Test", "API Base URL is missing!")
+            return
+
+        self.log_window.append(f"[TEST] Testing API connection to {base_url} with model '{model_name}'...")
+        self.status_label.setText("Testing API connection...")
+        QApplication.processEvents()
+
+        try:
+            client = VLMClient(api_key, model_name, base_url)
+            response = client.test_connection()
+            self.log_window.append(f"[TEST] ✅ API Connection OK! Response: '{response}'")
+            self.status_label.setText("API Connection OK")
+            QMessageBox.information(self, "API Test", f"API Connection Successful!\n\nModel: {model_name}\nResponse: '{response}'")
+        except Exception as e:
+            self.log_window.append(f"[TEST] ❌ API Connection Failed: {str(e)}")
+            self.status_label.setText("API Connection Failed")
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("API Test Failed")
+            msg_box.setIcon(QMessageBox.Critical)
+            msg_box.setText("API Connection Test Failed:")
+            msg_box.setInformativeText(str(e))
+            msg_box.setStandardButtons(QMessageBox.Ok)
+            msg_box.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
+            msg_box.exec()
 
     def start_process(self):
         self.save_settings()
