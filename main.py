@@ -80,7 +80,14 @@ class AnalysisWorker(QThread):
                     self.progress.emit(i+1, len(sampled_frames), f"Analyzing frame {i+1}/{len(sampled_frames)}...")
                     res = client.analyze_frame(path, custom_prompt=final_custom_prompt)
                     
-                    if res and 'dialogues' in res:
+                    if res is None:
+                        self.error.emit(f"VLM API Error on frame {i+1} of {os.path.basename(video_path)}. "
+                                        f"The model may not support vision or the API returned an invalid response. "
+                                        f"Check your model name, API key, and base URL.")
+                        shutil.rmtree(temp_dir, ignore_errors=True)
+                        return
+                    
+                    if 'dialogues' in res:
                         for dlg in res['dialogues']:
                             analysis_results.append({
                                 "start": ts,
@@ -151,11 +158,10 @@ class SubtitleVLMApp(QMainWindow):
         self.key_input = self.create_setting_row(settings_group, "API Key:", self.settings.get('api_key', ''), is_password=True)
         
         model_layout = QHBoxLayout()
-        model_layout.addWidget(QLabel("Model:"))
-        self.model_combo = QComboBox()
-        self.model_combo.addItems(["deepseek-v4-pro", "deepseek-v4-flash", "glm-5.1", "gemma-4-31b"])
-        self.model_combo.setCurrentText(self.settings.get('model_name', 'deepseek-v4-pro'))
-        model_layout.addWidget(self.model_combo)
+        model_layout.addWidget(QLabel("Model Name:"))
+        self.model_input = QLineEdit(self.settings.get('model_name', 'gemma-4-31b'))
+        self.model_input.setPlaceholderText("e.g., gemma-4-31b, kimi-k2.6, gemini-2.5-flash")
+        model_layout.addWidget(self.model_input)
         settings_group.addLayout(model_layout)
 
         settings_group.addWidget(QLabel("Custom Prompt (Bypass/Style):"))
@@ -347,7 +353,7 @@ class SubtitleVLMApp(QMainWindow):
         
         self.settings = {
             "api_key": self.key_input.text(),
-            "model_name": self.model_combo.currentText(),
+            "model_name": self.model_input.text(),
             "base_url": self.url_input.text(),
             "custom_prompt": self.prompt_input.toPlainText(),
             "glossary": glossary,
@@ -466,6 +472,7 @@ class SubtitleVLMApp(QMainWindow):
         self.start_btn.setEnabled(True)
         self.status_label.setText("Error")
         self.add_log(f"\n❌ Critical Error: {error_msg}")
+        QMessageBox.critical(self, "Analysis Error", error_msg)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
