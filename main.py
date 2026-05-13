@@ -25,7 +25,7 @@ class AnalysisWorker(QThread):
     progress = Signal(int, int, str) 
     log = Signal(str)
     # 처리 완료된 파일 개수(int) + 마지막 비디오의 분석 결과(List[Dict])
-    finished = Signal(int, List[Dict]) 
+    finished = Signal(int, object) 
     error = Signal(str)
 
     def __init__(self, video_list, settings):
