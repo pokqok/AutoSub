@@ -85,7 +85,7 @@ class AnalysisWorker(QThread):
                         self.progress.emit(curr, total, f"Sampling frames for {os.path.basename(video_path)}...")
                     
                     sampled_frames = sampler.extract_frames(video_path, temp_dir, progress_callback=update_sampling_progress)
-                    self.log.emit(f"  -> Extracted {len(sampled_frames)} frames to {os.path.basename(temp_dir)}")
+                    self.log.emit(f"  -> Extracted {len(sampled_frames)} frames to {os.path.basename(temp_dir)} (min_interval={sampler.min_interval_sec}s, max_limit={sampler.max_frames})")
                     
                     if not sampled_frames:
                         self.error.emit(f"No frames extracted from {os.path.basename(video_path)}. "
