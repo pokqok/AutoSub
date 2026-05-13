@@ -80,6 +80,7 @@ class AnalysisWorker(QThread):
                     is_duplicate = False
                     if i > 0:
                         prev = raw_results[i-1]
+                        # 텍스트와 색상이 모두 같아야 병합
                         if prev['text'] == curr['text'] and prev['color'] == curr['color']:
                             refined_results[-1]['end'] = curr['start'] + 1.5
                             is_duplicate = True
@@ -98,7 +99,7 @@ class AnalysisWorker(QThread):
 class SubtitleVLMApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("AI Subtitle VLM Pro - Multi-Dialogue & Color Edition")
+        self.setWindowTitle("AI Subtitle VLM Pro - Visual & Glossary Edition")
         self.setMinimumSize(1100, 700)
         self.setAcceptDrops(True)
         self.load_settings()
@@ -130,13 +131,25 @@ class SubtitleVLMApp(QMainWindow):
         self.prompt_input.setMaximumHeight(100)
         settings_group.addWidget(self.prompt_input)
 
-        settings_group.addWidget(QLabel("Glossary (Key=Value, one per line):"))
+        # Glossary Section
+        glossary_group = QVBoxLayout()
+        glossary_group.addWidget(QLabel("Glossary (Key=Value, one per line):"))
         self.glossary_input = QTextEdit()
         glossary_text = "\n".join([f"{k}={v}" for k, v in self.settings.get('glossary', {}).items()])
         self.glossary_input.setPlainText(glossary_text)
         self.glossary_input.setMaximumHeight(100)
-        settings_group.addWidget(self.glossary_input)
+        glossary_group.addWidget(self.glossary_input)
         
+        glossary_btns = QHBoxLayout()
+        btn_load_glossary = QPushButton("Load Glossary File")
+        btn_load_glossary.clicked.connect(self.load_glossary_file)
+        btn_save_glossary = QPushButton("Save Glossary File")
+        btn_save_glossary.clicked.connect(self.save_glossary_file)
+        glossary_btns.addWidget(btn_load_glossary)
+        glossary_btns.addWidget(btn_save_glossary)
+        glossary_group.addLayout(glossary_btns)
+        
+        settings_group.addLayout(glossary_group)
         left_panel.addLayout(settings_group)
         left_panel.addWidget(QLabel("----------------------------------"))
 
@@ -144,9 +157,14 @@ class SubtitleVLMApp(QMainWindow):
         self.video_list_widget = QListWidget()
         left_panel.addWidget(self.video_list_widget)
         
+        file_btns = QHBoxLayout()
+        btn_add_file = QPushButton("Add File")
+        btn_add_file.clicked.connect(self.add_single_file)
         btn_add_folder = QPushButton("Add Folder")
         btn_add_folder.clicked.connect(self.add_folder)
-        left_panel.addWidget(btn_add_folder)
+        file_btns.addWidget(btn_add_file)
+        file_btns.addWidget(btn_add_folder)
+        left_panel.addLayout(file_btns)
 
         self.start_btn = QPushButton("Start Analysis")
         self.start_btn.setMinimumHeight(50)
@@ -220,9 +238,51 @@ class SubtitleVLMApp(QMainWindow):
         elif path.lower().endswith(VIDEO_EXTENSIONS):
             self.video_list_widget.addItem(path)
 
+    def add_single_file(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Select Video", "", "Video Files (*.mp4 *.mkv *.avi *.mov *.flv *.wmv)")
+        if path:
+            self.video_list_widget.addItem(path)
+
     def add_folder(self):
         path = QFileDialog.getExistingDirectory(self, "Select Folder")
         if path: self.add_path(path)
+
+    def load_glossary_file(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Open Glossary File", "", "Text Files (*.txt);;JSON Files (*.json)")
+        if not path: return
+        
+        try:
+            if path.endswith('.json'):
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        text = "\n".join([f"{k}={v}" for k, v in data.items()])
+                        self.glossary_input.setPlainText(text)
+            else:
+                with open(path, 'r', encoding='utf-8') as f:
+                    self.glossary_input.setPlainText(f.read())
+        except Exception as e:
+            self.log_window.append(f"Error loading glossary: {e}")
+
+    def save_glossary_file(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Save Glossary File", "", "Text Files (*.txt);;JSON Files (*.json)")
+        if not path: return
+        
+        try:
+            text = self.glossary_input.toPlainText()
+            if path.endswith('.json'):
+                glossary = {}
+                for line in text.split('\n'):
+                    if '=' in line:
+                        k, v = line.split('=', 1)
+                        glossary[k.strip()] = v.strip()
+                with open(path, 'w', encoding='utf-8') as f:
+                    json.dump(glossary, f, ensure_ascii=False, indent=2)
+            else:
+                with open(path, 'w', encoding='utf-8') as f:
+                    f.write(text)
+        except Exception as e:
+            self.log_window.append(f"Error saving glossary: {e}")
 
     def load_settings(self):
         if os.path.exists(CONFIG_FILE):
