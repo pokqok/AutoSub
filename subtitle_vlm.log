@@ -1,4 +1,4 @@
-=== AutoSub Log - 2026-05-13T22:04:21.495708 ===
+=== AutoSub Log - 2026-05-13T22:07:22.074079 ===
 Pre-flight API connection test...
   -> API connection verified.
 Initializing OCR engine: PaddleOCR...
@@ -7,25 +7,3 @@ Warming up OCR engine (first run may download models)...
 [1/1] Processing: 日本語_４K_モザなし_アコ露出(ボイス).mp4
   Phase 1/2: OCR extracting Japanese text (interval=0.3s)...
   [OCR] Starting: video=D:/a/ani/pigtarotaro/Pigtarotaro/日本語_４K_モザなし_アコ露出(ボイス).mp4, fps=60.0, interval=0.3s
-  [OCR Error frame 18] tuple index out of range
-  [OCR Error frame 36] tuple index out of range
-  [OCR Error frame 54] tuple index out of range
-  [OCR Error frame 72] tuple index out of range
-  [OCR Error frame 90] tuple index out of range
-  [OCR Error frame 108] tuple index out of range
-  [OCR Error frame 126] tuple index out of range
-  [OCR Error frame 144] tuple index out of range
-  [OCR Error frame 162] tuple index out of range
-  [OCR Error frame 180] tuple index out of range
-  [OCR Error frame 198] tuple index out of range
-  [OCR Error frame 216] tuple index out of range
-  [OCR Error frame 234] tuple index out of range
-  [OCR Error frame 252] tuple index out of range
-  [OCR Error frame 270] tuple index out of range
-  [OCR Error frame 288] tuple index out of range
-  [OCR Error frame 306] tuple index out of range
-  [OCR Error frame 324] tuple index out of range
-  [OCR Error frame 342] tuple index out of range
-  [OCR Error frame 360] tuple index out of range
-  [OCR Error frame 378] tuple index out of range
-  [OCR Error frame 396] tuple index out of range

@@ -214,13 +214,21 @@ class OCRExtractor:
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
                 processed = clahe.apply(gray)
+
+                # 4K 영상은 OCR 처리를 위해 리사이즈 (최대 1920 너비, 비율 유지)
+                h, w = processed.shape
+                max_w = 1920
+                if w > max_w:
+                    scale = max_w / w
+                    new_w = int(w * scale)
+                    new_h = int(h * scale)
+                    processed = cv2.resize(processed, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+                # contiguous uint8 array로 확실히 변환 (특정 PaddleOCR 버전 호환용)
                 processed = np.ascontiguousarray(processed.astype(np.uint8))
 
                 try:
-                    # numpy array 대신 PIL Image로 변환해서 전달 (버전 호환성)
-                    from PIL import Image
-                    pil_img = Image.fromarray(processed)
-                    ocr_res = self.ocr.ocr(pil_img)
+                    ocr_res = self.ocr.ocr(processed)
                 except Exception as e:
                     self._log(f"  [OCR Error frame {frame_idx}] {str(e)}")
                     ocr_res = None
