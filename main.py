@@ -18,12 +18,9 @@ CONFIG_FILE = "config.json"
 VIDEO_EXTENSIONS = ('.mp4', '.mkv', '.avi', '.mov', '.flv', '.wmv')
 
 class AnalysisWorker(QThread):
-    """
-    영상 분석 및 대사 추출을 수행하는 스레드
-    """
-    progress = Signal(int, int, str)
+    progress = Signal(int, int, str) 
     log = Signal(str)
-    finished = Signal(List[Dict]) # 분석 결과 리스트 전달
+    finished = Signal(List[Dict]) 
     error = Signal(str)
 
     def __init__(self, video_path, settings):
@@ -37,7 +34,6 @@ class AnalysisWorker(QThread):
             model_name = self.settings['model_name']
             base_url = self.settings['base_url']
             custom_prompt = self.settings.get('custom_prompt', '')
-            glossary = self.settings.get('glossary', {})
 
             if not api_key:
                 self.error.emit("API Key is missing!")
@@ -46,7 +42,6 @@ class AnalysisWorker(QThread):
             client = VLMClient(api_key, model_name, base_url)
             sampler = SubtitleSampler()
             
-            # 1. 프레임 추출
             self.log.emit(f"Sampling frames for {os.path.basename(self.video_path)}...")
             temp_dir = os.path.join(os.path.dirname(self.video_path), "vlm_temp")
             
@@ -55,11 +50,11 @@ class AnalysisWorker(QThread):
 
             sampled_frames = sampler.extract_frames(self.video_path, temp_dir, progress_callback=update_sampling_progress)
             
-            # 2. VLM 분석
             self.log.emit(f"Analyzing {len(sampled_frames)} frames via VLM...")
-            analysis_results = []
+            raw_results = []
             
-            # Glossary를 프롬프트에 주입하여 번역 정확도 향상
+            # 사전 단어집을 프롬프트에 주입 (번역 힌트)
+            glossary = self.settings.get('glossary', {})
             glossary_text = "\n".join([f"{k} -> {v}" for k, v in glossary.items()])
             final_custom_prompt = f"{custom_prompt}\n\nGlossary Guidelines:\n{glossary_text}" if glossary_text else custom_prompt
 
@@ -67,29 +62,27 @@ class AnalysisWorker(QThread):
                 self.progress.emit(i+1, len(sampled_frames), f"Analyzing frame {i+1}/{len(sampled_frames)}...")
                 res = client.analyze_frame(path, custom_prompt=final_custom_prompt)
                 if res and res.get('is_dialogue'):
-                    analysis_results.append({
+                    # 원문, 번역, 색상 모두 저장
+                    raw_results.append({
                         "start": ts,
-                        "end": ts + 2.0, # 기본값, 나중에 결정
-                        "text": res.get('translated', '')
+                        "end": ts + 1.5,
+                        "original": res.get('original', ''),
+                        "text": res.get('translated', ''),
+                        "color": res.get('color', '#FFFFFF')
                     })
             
-            # 임시파일 정리
             shutil.rmtree(temp_dir, ignore_errors=True)
             
-            # 3. 타임라인 정제 (중복 제거 및 종료 시간 설정)
+            # 타임라인 정제 및 병합
             refined_results = []
-            if analysis_results:
-                for i in range(len(analysis_results)):
-                    curr = analysis_results[i]
-                    if i > 0 and analysis_results[i-1]['text'] == curr['text']:
-                        # 이전 대사와 같으면 종료 시간만 업데이트
-                        refined_results[-1]['end'] = curr['start'] + 2.0
+            if raw_results:
+                for i in range(len(raw_results)):
+                    curr = raw_results[i]
+                    if i > 0 and raw_results[i-1]['text'] == curr['text']:
+                        refined_results[-1]['end'] = curr['start'] + 1.5
                         continue
-                    
-                    # 새 대사 시작
                     if i > 0:
                         refined_results[-1]['end'] = curr['start']
-                    
                     refined_results.append(curr)
 
             self.finished.emit(refined_results)
@@ -100,24 +93,21 @@ class AnalysisWorker(QThread):
 class SubtitleVLMApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("AI Subtitle VLM - Pro Edition")
-        self.setMinimumSize(1000, 700)
+        self.setWindowTitle("AI Subtitle VLM Pro - Visual & Glossary Edition")
+        self.setMinimumSize(1100, 700)
         self.setAcceptDrops(True)
         self.load_settings()
         self.init_ui()
-        self.current_analysis = [] # 현재 분석된 자막 데이터
+        self.current_analysis = []
 
     def init_ui(self):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QHBoxLayout(central_widget)
 
-        # --- Left Panel: Settings ---
         left_panel = QVBoxLayout()
-        
         settings_group = QVBoxLayout()
         
-        # API Basics
         self.url_input = self.create_setting_row(settings_group, "API Base URL:", self.settings.get('base_url', 'https://api.deepseek.com'))
         self.key_input = self.create_setting_row(settings_group, "API Key:", self.settings.get('api_key', ''), is_password=True)
         
@@ -129,29 +119,26 @@ class SubtitleVLMApp(QMainWindow):
         model_layout.addWidget(self.model_combo)
         settings_group.addLayout(model_layout)
 
-        # Custom Prompt
-        settings_group.addWidget(QLabel("Custom Prompt (Jailbreak/Style):"))
+        settings_group.addWidget(QLabel("Custom Prompt (Bypass/Style):"))
         self.prompt_input = QTextEdit()
         self.prompt_input.setPlainText(self.settings.get('custom_prompt', ''))
-        self.prompt_input.setMaximumHeight(120)
+        self.prompt_input.setMaximumHeight(100)
         settings_group.addWidget(self.prompt_input)
 
-        # Glossary (Simple Text Area: Key=Value per line)
         settings_group.addWidget(QLabel("Glossary (Key=Value, one per line):"))
         self.glossary_input = QTextEdit()
         glossary_text = "\n".join([f"{k}={v}" for k, v in self.settings.get('glossary', {}).items()])
         self.glossary_input.setPlainText(glossary_text)
-        self.glossary_input.setMaximumHeight(120)
+        self.glossary_input.setMaximumHeight(100)
         settings_group.addWidget(self.glossary_input)
         
         left_panel.addLayout(settings_group)
         left_panel.addWidget(QLabel("----------------------------------"))
 
-        # Video Queue
         left_panel.addWidget(QLabel("Video Queue"))
         self.video_list_widget = QListWidget()
         left_panel.addWidget(self.video_list_widget)
-
+        
         btn_add_folder = QPushButton("Add Folder")
         btn_add_folder.clicked.connect(self.add_folder)
         left_panel.addWidget(btn_add_folder)
@@ -164,11 +151,9 @@ class SubtitleVLMApp(QMainWindow):
 
         main_layout.addLayout(left_panel, 1)
 
-        # --- Right Panel: Tabbed Interface ---
         right_panel = QVBoxLayout()
         self.tabs = QTabWidget()
 
-        # Tab 1: Log & Progress
         self.log_tab = QWidget()
         log_layout = QVBoxLayout(self.log_tab)
         self.progress_bar = QProgressBar()
@@ -181,11 +166,10 @@ class SubtitleVLMApp(QMainWindow):
         log_layout.addWidget(self.log_window)
         self.tabs.addTab(self.log_tab, "Process Log")
 
-        # Tab 2: Review & Edit
         self.review_tab = QWidget()
         review_layout = QVBoxLayout(self.review_tab)
-        self.edit_table = QTableWidget(0, 3)
-        self.edit_table.setHorizontalHeaderLabels(["Start", "End", "Text"])
+        self.edit_table = QTableWidget(0, 4) # Start, End, Text, Color
+        self.edit_table.setHorizontalHeaderLabels(["Start", "End", "Text", "Color(HEX)"])
         self.edit_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         review_layout.addWidget(self.edit_table)
         
@@ -200,7 +184,7 @@ class SubtitleVLMApp(QMainWindow):
         self.export_btn.clicked.connect(self.export_subtitles)
         export_layout.addWidget(self.export_btn)
         review_layout.addLayout(export_layout)
-        self.tabs.addTab(self.review_tab, "Edit & Export")
+        self.tabs.addTab(self.review_tab, "Edit & Review")
 
         right_panel.addWidget(self.tabs)
         main_layout.addLayout(right_panel, 2)
@@ -241,7 +225,6 @@ class SubtitleVLMApp(QMainWindow):
         else: self.settings = {}
 
     def save_settings(self):
-        # Glossary 파싱
         glossary = {}
         for line in self.glossary_input.toPlainText().split('\n'):
             if '=' in line:
@@ -265,13 +248,9 @@ class SubtitleVLMApp(QMainWindow):
 
         self.start_btn.setEnabled(False)
         self.log_window.clear()
-        self.current_analysis = []
         
-        # 첫 번째 영상만 분석하도록 설정 (편집 기능을 위해)
-        # 만약 여러 개를 한꺼번에 하려면 루프를 돌려야 하지만, 
-        # 여기서는 '편집'을 위해 선택된 첫 번째 파일에 집중합니다.
+        # 첫 번째 파일에 대해 분석 수행
         video_path = video_files[0]
-        
         self.worker = AnalysisWorker(video_path, self.settings)
         self.worker.progress.connect(self.update_progress)
         self.worker.log.connect(self.add_log)
@@ -293,7 +272,7 @@ class SubtitleVLMApp(QMainWindow):
         self.current_analysis = results
         self.populate_edit_table()
         self.export_btn.setEnabled(True)
-        self.tabs.setCurrentIndex(1) # 편집 탭으로 이동
+        self.tabs.setCurrentIndex(1)
 
     def populate_edit_table(self):
         self.edit_table.setRowCount(0)
@@ -303,18 +282,27 @@ class SubtitleVLMApp(QMainWindow):
             self.edit_table.setItem(row, 0, QTableWidgetItem(f"{sub['start']:.2f}"))
             self.edit_table.setItem(row, 1, QTableWidgetItem(f"{sub['end']:.2f}"))
             self.edit_table.setItem(row, 2, QTableWidgetItem(sub['text']))
+            self.edit_table.setItem(row, 3, QTableWidgetItem(sub.get('color', '#FFFFFF')))
 
     def export_subtitles(self):
         video_path = self.video_list_widget.item(0).text()
         fmt = self.format_combo.currentText()
         
-        # 테이블에서 최종 텍스트 가져오기
+        # 테이블 데이터 기반 최종 자막 리스트 생성
         final_subs = []
+        glossary = self.settings.get('glossary', {})
+        
         for i in range(self.edit_table.rowCount()):
+            text = self.edit_table.item(i, 2).text()
+            # [후처리] 단어집 기반 대체 작업
+            for k, v in glossary.items():
+                text = text.replace(k, v)
+                
             final_subs.append({
                 "start": float(self.edit_table.item(i, 0).text()),
                 "end": float(self.edit_table.item(i, 1).text()),
-                "text": self.edit_table.item(i, 2).text()
+                "text": text,
+                "color": self.edit_table.item(i, 3).text()
             })
         
         exporter = SubtitleExporter()
@@ -326,10 +314,6 @@ class SubtitleVLMApp(QMainWindow):
             exporter.generate_ass(final_subs, out_path)
             
         self.add_log(f"Exported to {out_path}")
-
-    def process_error(self, error_msg):
-        self.start_btn.setEnabled(True)
-        self.add_log(f"\n❌ Error: {error_msg}")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

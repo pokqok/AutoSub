@@ -1,5 +1,5 @@
 import datetime
-from typing import List, Tuple
+from typing import List, Dict
 
 class SubtitleExporter:
     """
@@ -22,7 +22,7 @@ class SubtitleExporter:
         hours = total_seconds // 3600
         minutes = (total_seconds % 3600) // 60
         secs = total_seconds % 60
-        cents = int((td.microseconds / 1000) * 10) # ASS는 1/100초 단위
+        cents = int((td.microseconds / 1000) * 10)
         return f"{hours:01}:{minutes:02}:{secs:02}.{cents:02}"
 
     def generate_srt(self, subtitles: List[Dict], output_path: str):
@@ -32,7 +32,7 @@ class SubtitleExporter:
 
     def generate_ass(self, subtitles: List[Dict], output_path: str):
         """
-        기본 스타일의 ASS 파일을 생성합니다.
+        추출된 색상 정보를 바탕으로 ASS 스타일 태그가 적용된 파일을 생성합니다.
         """
         header = [
             "[Script Info]",
@@ -52,10 +52,17 @@ class SubtitleExporter:
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
         ]
         
+        def rgb_to_ass_color(hex_color: str) -> str:
+            if not hex_color or not hex_color.startswith('#') or len(hex_color) != 7:
+                return "&H00FFFFFF&" 
+            r, g, b = hex_color[1:3], hex_color[3:5], hex_color[5:7]
+            return f"&H{b}{g}{r}&"
+
         with open(output_path, "w", encoding="utf-8") as f:
             f.write("\n".join(header) + "\n")
             for sub in subtitles:
                 start = self.format_time_ass(sub['start'])
                 end = self.format_time_ass(sub['end'])
-                # ASS 형식: Dialogue: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-                f.write(f"Dialogue: 0,{start},{end},Default,,0,0,0,effetto, {sub['text']}\n")
+                color_tag = rgb_to_ass_color(sub.get('color', '#FFFFFF'))
+                text = f"{{\\c{color_tag}}}{sub['text']}"
+                f.write(f"Dialogue: 0,{start},{end},Default,,0,0,0,effetto, {text}\n")
