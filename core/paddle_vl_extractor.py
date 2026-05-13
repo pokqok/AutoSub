@@ -3,6 +3,7 @@ import numpy as np
 import torch
 from PIL import Image
 from typing import List, Dict, Optional, Tuple, Callable
+import os
 
 class PaddleVLExtractor:
     """
@@ -12,14 +13,17 @@ class PaddleVLExtractor:
     def __init__(self, model_path: str = "PaddlePaddle/PaddleOCR-VL-1.5",
                  device: Optional[str] = None, interval_sec: float = 0.3,
                  similarity_threshold: float = 0.6,
-                 log_callback: Optional[Callable] = None):
+                 log_callback: Optional[Callable] = None,
+                 debug_dir: Optional[str] = None):
         self.model_path = model_path
         self.interval_sec = interval_sec
         self.similarity_threshold = similarity_threshold
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.log_callback = log_callback
+        self.debug_dir = debug_dir  # 디버깅용 프레임 저장 폴더
         self._model = None
         self._processor = None
+        self._debug_frame_count = 0
 
     def _load_model(self):
         from transformers import AutoProcessor, AutoModelForImageTextToText
@@ -33,13 +37,34 @@ class PaddleVLExtractor:
         if self.log_callback:
             self.log_callback(msg)
 
+    def _save_debug_image(self, pil_image: Image.Image, prefix: str, text: str):
+        """디버깅용 이미지 저장"""
+        if not self.debug_dir:
+            return
+        try:
+            os.makedirs(self.debug_dir, exist_ok=True)
+            safe_text = "".join(c for c in text[:30] if c.isalnum() or c in (' ', '-', '_'))
+            filename = f"{prefix}_{self._debug_frame_count:04d}_{safe_text}.png"
+            filepath = os.path.join(self.debug_dir, filename)
+            pil_image.save(filepath)
+            self._debug_frame_count += 1
+        except Exception:
+            pass
+
     def _extract_text_from_frame(self, pil_image: Image.Image, frame_idx: int = 0) -> str:
         """단일 PIL 이미지에서 텍스트를 추출합니다."""
         if self._model is None:
             self._load_model()
+            self._log(f"  [VL] Model loaded on {self.device}")
 
-        # 더 단순하고 명확한 프롬프트 (문서용 태그 제거)
-        prompt = "Extract all Japanese text visible in this image. Return only the text lines, separated by newlines. Do not add any explanation."
+        # 애니메이션/영상 자막에 특화된 프롬프트 (문서용 태그 제거, 매우 구체적)
+        prompt = (
+            "Look at this image from a Japanese anime or video. "
+            "Find any Japanese text (hiragana, katakana, kanji) shown as subtitles at the bottom or anywhere on screen. "
+            "Return ONLY the Japanese text. No explanations, no translations, no markdown. "
+            "If there is no Japanese text, say exactly: NO_TEXT"
+        )
+        
         inputs = self._processor(
             text=prompt,
             images=pil_image.convert("RGB"),
@@ -57,18 +82,30 @@ class PaddleVLExtractor:
 
         generated_text = self._processor.batch_decode(outputs, skip_special_tokens=True)[0]
         
-        # 프롬프트 및 잡음 제거
+        # 프롬프트 echo 및 잡음 제거
         clean_text = generated_text.strip()
-        if clean_text.lower().startswith("extract all"):
-            # 프롬프트가 echo된 경우
-            lines = clean_text.split("\n")
-            # 첫 줄이 프롬프트 echo면 제거
-            if lines and ("extract" in lines[0].lower() or "image" in lines[0].lower()):
-                lines = lines[1:]
-            clean_text = "\n".join(lines).strip()
         
-        if frame_idx <= 5:
-            self._log(f"  [VL Debug frame {frame_idx}] raw output: '{generated_text[:100]}...' -> clean: '{clean_text[:80]}...'")
+        # 첫 줄이 프롬프트 관련 내용이면 제거
+        lines = clean_text.split("\n")
+        filtered_lines = []
+        for line in lines:
+            line_lower = line.lower().strip()
+            if any(skip in line_lower for skip in [
+                "look at this", "find any japanese", "return only", 
+                "no explanations", "if there is no", "this image from"
+            ]):
+                continue
+            if line_lower == "no_text":
+                return ""
+            filtered_lines.append(line)
+        
+        clean_text = "\n".join(filtered_lines).strip()
+        
+        # 디버깅 이미지 저장
+        self._save_debug_image(pil_image, f"frame_{frame_idx}", clean_text)
+        
+        if frame_idx <= 10:
+            self._log(f"  [VL Debug frame {frame_idx}] raw: '{generated_text[:120]}' clean: '{clean_text[:80]}'")
         
         return clean_text
 
@@ -90,6 +127,8 @@ class PaddleVLExtractor:
         frame_idx = 0
         last_timestamp = 0.0
         total_text_frames = 0
+        debug_dir = os.path.join(os.path.dirname(video_path), "vl_debug_frames")
+        self.debug_dir = debug_dir
 
         while True:
             ret, frame = cap.read()
@@ -103,7 +142,7 @@ class PaddleVLExtractor:
                 if progress_callback:
                     progress_callback(frame_idx, total_frames)
 
-                # 하단 60%만 crop해서 보냄 (자막은 보통 하단, 문서 모델은 전체 화면에 산만함)
+                # 하단 60% crop (자막은 보통 하단)
                 h, w = frame.shape[:2]
                 crop_top = int(h * 0.4)
                 cropped = frame[crop_top:h, 0:w]
@@ -115,6 +154,8 @@ class PaddleVLExtractor:
                     current_raw = self._extract_text_from_frame(pil_image, frame_idx)
                 except Exception as e:
                     self._log(f"  [VL Error frame {frame_idx}] {str(e)}")
+                    import traceback
+                    self._log(traceback.format_exc())
                     current_raw = ""
 
                 if current_raw.strip():
@@ -152,4 +193,5 @@ class PaddleVLExtractor:
 
         self._log(f"  [VL Summary] total frames checked: {frame_idx // interval_frames}, "
                   f"frames with text: {total_text_frames}, final segments: {len(results)}")
+        self._log(f"  [VL Debug] Debug frames saved to: {debug_dir}")
         return results
