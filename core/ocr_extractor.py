@@ -161,7 +161,7 @@ class OCRExtractor:
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
                 processed = clahe.apply(gray)
-                ocr_res = self.ocr.ocr(processed, cls=True)
+                ocr_res = self.ocr.ocr(processed)
                 current_raw, current_pos = self._parse_ocr_result(ocr_res, frame.shape, frame_idx)
 
                 if ocr_res and ocr_res[0]:
