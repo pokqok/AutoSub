@@ -25,7 +25,6 @@ class OCRExtractor:
         self.ocr = PaddleOCR(
             use_angle_cls=True,
             lang='japan',
-            show_log=False
         )
 
     def _log(self, msg: str):
