@@ -19,15 +19,22 @@ class VLMClient:
         with open(image_path, "rb") as image_file:
             return base64.b64encode(image_file.read()).decode('utf-8')
 
-    def analyze_frame(self, image_path: str) -> Optional[Dict[str, Any]]:
+    def analyze_frame(self, image_path: str, custom_prompt: str = "") -> Optional[Dict[str, Any]]:
+        """
+        단일 프레임을 분석하여 일본어 원문과 한국어 번역문을 추출합니다.
+        custom_prompt가 제공되면 기본 지침 앞에 추가하여 모델의 행동을 제어합니다.
+        """
         base64_image = self._encode_image(image_path)
         
-        prompt = (
+        core_instruction = (
             "Analyze this Japanese video frame. Identify all text that is clearly 'spoken dialogue'. "
             "Differentiate it from background text, logos, UI, or sound effects. "
             "Return only a JSON object. If no dialogue is found, return {'is_dialogue': false}. "
             "If found, return: {'is_dialogue': true, 'original': 'Japanese text', 'translated': 'Korean translation'}"
         )
+
+        # 검열 회피 또는 스타일 지정을 위한 커스텀 프롬프트 결합
+        full_prompt = f"{custom_prompt}\n\nCore Task: {core_instruction}" if custom_prompt else core_instruction
 
         payload = {
             "model": self.model_name,
@@ -35,7 +42,7 @@ class VLMClient:
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": prompt},
+                        {"type": "text", "text": full_prompt},
                         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
                     ]
                 }

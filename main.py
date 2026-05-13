@@ -32,6 +32,7 @@ class WorkerThread(QThread):
             api_key = self.settings['api_key']
             model_name = self.settings['model_name']
             base_url = self.settings['base_url']
+            custom_prompt = self.settings.get('custom_prompt', '')
             
             if not api_key:
                 self.error.emit("API Key is missing!")
@@ -66,7 +67,7 @@ class WorkerThread(QThread):
                 analysis_results = []
                 for i, (ts, path) in enumerate(sampled_frames):
                     self.progress.emit(i+1, len(sampled_frames), f"Analyzing frame {i+1}/{len(sampled_frames)}...")
-                    res = client.analyze_frame(path)
+                    res = client.analyze_frame(path, custom_prompt=custom_prompt)
                     if res and res.get('is_dialogue'):
                         analysis_results.append((ts, res.get('translated', '')))
                 
@@ -122,6 +123,15 @@ class SubtitleVLMApp(QMainWindow):
         self.model_combo.setCurrentText(self.settings.get('model_name', 'deepseek-v4-pro'))
         model_layout.addWidget(self.model_combo)
         settings_group.addLayout(model_layout)
+        
+        # Custom Prompt Area
+        prompt_label = QLabel("Custom Prompt (Jailbreak/Style):")
+        settings_group.addWidget(prompt_label)
+        self.prompt_input = QTextEdit()
+        self.prompt_input.setPlainText(self.settings.get('custom_prompt', ''))
+        self.prompt_input.setPlaceholderText("Enter instructions to bypass censorship or specify translation style...")
+        self.prompt_input.setMaximumHeight(100)
+        settings_group.addWidget(self.prompt_input)
         
         left_panel.addLayout(settings_group)
         left_panel.addWidget(QLabel("----------------------------------"))
@@ -202,7 +212,8 @@ class SubtitleVLMApp(QMainWindow):
         self.settings = {
             "api_key": self.key_input.text(),
             "model_name": self.model_combo.currentText(),
-            "base_url": self.url_input.text()
+            "base_url": self.url_input.text(),
+            "custom_prompt": self.prompt_input.toPlainText()
         }
         with open(CONFIG_FILE, "w") as f:
             json.dump(self.settings, f)
@@ -221,7 +232,8 @@ class SubtitleVLMApp(QMainWindow):
         settings = {
             "api_key": self.key_input.text(),
             "model_name": self.model_combo.currentText(),
-            "base_url": self.url_input.text()
+            "base_url": self.url_input.text(),
+            "custom_prompt": self.prompt_input.toPlainText()
         }
 
         self.worker = WorkerThread(video_files, settings)
