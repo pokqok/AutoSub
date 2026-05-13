@@ -56,10 +56,22 @@ class AnalysisWorker(QThread):
                 self.log.emit(f"[{idx+1}/{total_videos}] Processing: {os.path.basename(video_path)}")
                 
                 # SRT 존재 여부 확인 (건너뛰기)
+                # 단, 기존 SRT가 비어있거나 실패한 경우(0바이트/대사 없음) 재처리함
                 srt_path = os.path.splitext(video_path)[0] + ".srt"
                 if os.path.exists(srt_path):
-                    self.log.emit(f"Skipping: SRT already exists for {os.path.basename(video_path)}")
-                    continue
+                    try:
+                        with open(srt_path, 'r', encoding='utf-8') as f:
+                            content = f.read().strip()
+                        # SRT에 실제 자막 번호와 시간 라인(-->)이 있는지 확인
+                        if '-->' in content and len(content) > 50:
+                            self.log.emit(f"Skipping: Valid SRT already exists for {os.path.basename(video_path)}")
+                            continue
+                        else:
+                            self.log.emit(f"Re-processing: Existing SRT is empty/invalid for {os.path.basename(video_path)}")
+                            os.remove(srt_path)
+                    except Exception:
+                        # 파일 읽기 실패 시 안전하게 재처리
+                        os.remove(srt_path)
 
                 # 임시 프레임 저장 폴더
                 temp_dir = os.path.join(os.path.dirname(video_path), "vlm_temp")
