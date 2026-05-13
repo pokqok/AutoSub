@@ -86,12 +86,14 @@ class OCRExtractor:
         lines = self._normalize_ocr_result(ocr_res)
         h, w = frame_shape[:2]
 
-        if frame_idx <= 10:
+        if frame_idx <= 5 or (not valid_lines and lines):
             raw_info = []
             for l in lines:
                 text, conf = self._safe_get_text_conf(l)
                 if text is not None:
                     raw_info.append(f"'{text}'({conf:.2f})")
+                else:
+                    raw_info.append(f"PARSE_FAIL:{str(l)[:60]}")
             self._log(f"  [OCR Debug frame {frame_idx}] raw lines ({len(lines)}): {raw_info}")
 
         valid_lines = []
@@ -198,6 +200,8 @@ class OCRExtractor:
         total_valid_lines = 0
 
         self._log(f"  [OCR] Starting: video={video_path}, fps={fps:.1f}, interval={self.interval_sec}s")
+        
+        first_frame_debug = True  # 첫 프레임의 OCR raw 결과를 상세 로깅
 
         while True:
             ret, frame = cap.read()
@@ -228,8 +232,12 @@ class OCRExtractor:
                 # 또는 내부에서 처리하도록 원본 그대로
                 try:
                     import traceback
-                    # PaddleOCR은 원본 BGR 프레임이 필요 (grayscale이면 img.shape[2] 에러)
                     ocr_res = self.ocr.ocr(frame)
+                    if first_frame_debug and ocr_res is not None:
+                        # 첫 프레임의 OCR raw 결과 형식을 상세 로깅 (원인 파악용)
+                        sample = str(ocr_res)[:300]
+                        self._log(f"  [OCR Sample frame {frame_idx}] type={type(ocr_res).__name__}, len={len(ocr_res) if isinstance(ocr_res, (list, tuple)) else 'N/A'}, content={sample}")
+                        first_frame_debug = False
                 except Exception as e:
                     tb = traceback.format_exc()
                     self._log(f"  [OCR Error frame {frame_idx}] {str(e)}")
