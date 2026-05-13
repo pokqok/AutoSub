@@ -62,77 +62,86 @@ class AnalysisWorker(QThread):
                 # 임시 프레임 저장 폴더
                 temp_dir = os.path.join(os.path.dirname(video_path), "vlm_temp")
                 
-                # 1. 프레임 추출
-                def update_sampling_progress(curr, total):
-                    self.progress.emit(curr, total, f"Sampling frames for {os.path.basename(video_path)}...")
+                # 기존 잔여 캐시 정리 (이전 실행이나 강제종료로 남은 폴더)
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                    self.log.emit(f"  -> Cleaned up old temp folder: {os.path.basename(temp_dir)}")
                 
-                sampled_frames = sampler.extract_frames(video_path, temp_dir, progress_callback=update_sampling_progress)
-                self.log.emit(f"  -> Extracted {len(sampled_frames)} frames to {temp_dir}")
-                
-                if not sampled_frames:
-                    self.error.emit(f"No frames extracted from {os.path.basename(video_path)}. "
-                                    f"The video might not have subtitle changes in the bottom {sampler.roi_bottom_percent}% region.")
-                    return
-                
-                # 2. VLM 분석 및 번역
-                self.log.emit(f"Analyzing {len(sampled_frames)} frames with model '{model_name}'...")
-                analysis_results = []
-                
-                glossary = self.settings.get('glossary', {})
-                glossary_text = "\n".join([f"{k} -> {v}" for k, v in glossary.items()])
-                final_custom_prompt = f"{custom_prompt}\n\nGlossary Guidelines:\n{glossary_text}" if glossary_text else custom_prompt
-
-                for i, (ts, path) in enumerate(sampled_frames):
-                    self.progress.emit(i+1, len(sampled_frames), f"Sending frame {i+1}/{len(sampled_frames)} to VLM...")
-                    try:
-                        res = client.analyze_frame(path, custom_prompt=final_custom_prompt)
-                    except Exception as e:
-                        self.error.emit(f"VLM Error on frame {i+1} ({os.path.basename(path)}):\n{str(e)}")
-                        shutil.rmtree(temp_dir, ignore_errors=True)
+                # 성공/실패/에러 무관하게 항상 임시 폴더를 삭제하도록 try/finally로 감쌈
+                try:
+                    # 1. 프레임 추출
+                    def update_sampling_progress(curr, total):
+                        self.progress.emit(curr, total, f"Sampling frames for {os.path.basename(video_path)}...")
+                    
+                    sampled_frames = sampler.extract_frames(video_path, temp_dir, progress_callback=update_sampling_progress)
+                    self.log.emit(f"  -> Extracted {len(sampled_frames)} frames to {os.path.basename(temp_dir)}")
+                    
+                    if not sampled_frames:
+                        self.error.emit(f"No frames extracted from {os.path.basename(video_path)}. "
+                                        f"The video might not have subtitle changes in the bottom {sampler.roi_bottom_percent}% region.")
                         return
                     
-                    if 'dialogues' in res:
-                        for dlg in res['dialogues']:
-                            analysis_results.append({
-                                "start": ts,
-                                "end": ts + 1.5,
-                                "original": dlg.get('original', ''),
-                                "text": dlg.get('translated', ''),
-                                "color": dlg.get('color', '#FFFFFF')
-                            })
-                
-                if not analysis_results:
-                    self.log.emit(f"  -> WARNING: No dialogues detected in any frame of {os.path.basename(video_path)}.")
-                    self.log.emit(f"     The VLM returned empty results. Check if the model supports vision/image input.")
-                
-                # 3. 타임라인 정제
-                refined_results = []
-                if analysis_results:
-                    for i in range(len(analysis_results)):
-                        curr = analysis_results[i]
-                        is_duplicate = False
-                        if i > 0:
-                            prev = analysis_results[i-1]
-                            if prev['text'] == curr['text'] and prev['color'] == curr['color']:
-                                refined_results[-1]['end'] = curr['start'] + 1.5
-                                is_duplicate = True
-                        
-                        if not is_duplicate:
-                            if i > 0 and refined_results:
-                                refined_results[-1]['end'] = curr['start']
-                            refined_results.append(curr)
+                    # 2. VLM 분석 및 번역
+                    self.log.emit(f"Analyzing {len(sampled_frames)} frames with model '{model_name}'...")
+                    analysis_results = []
+                    
+                    glossary = self.settings.get('glossary', {})
+                    glossary_text = "\n".join([f"{k} -> {v}" for k, v in glossary.items()])
+                    final_custom_prompt = f"{custom_prompt}\n\nGlossary Guidelines:\n{glossary_text}" if glossary_text else custom_prompt
 
-                # 4. 선택된 포맷으로 저장
-                if self.output_format == "SRT":
-                    exporter.generate_srt(refined_results, subtitle_path)
-                else:
-                    exporter.generate_ass(refined_results, subtitle_path)
-                
-                # 임시 파일 정리
-                shutil.rmtree(temp_dir, ignore_errors=True)
-                processed_count += 1
-                last_results = refined_results
-                self.log.emit(f"Successfully saved {self.output_format}: {os.path.basename(subtitle_path)}")
+                    for i, (ts, path) in enumerate(sampled_frames):
+                        self.progress.emit(i+1, len(sampled_frames), f"Sending frame {i+1}/{len(sampled_frames)} to VLM...")
+                        try:
+                            res = client.analyze_frame(path, custom_prompt=final_custom_prompt)
+                        except Exception as e:
+                            self.error.emit(f"VLM Error on frame {i+1} ({os.path.basename(path)}):\n{str(e)}")
+                            return
+                        
+                        if 'dialogues' in res:
+                            for dlg in res['dialogues']:
+                                analysis_results.append({
+                                    "start": ts,
+                                    "end": ts + 1.5,
+                                    "original": dlg.get('original', ''),
+                                    "text": dlg.get('translated', ''),
+                                    "color": dlg.get('color', '#FFFFFF')
+                                })
+                    
+                    if not analysis_results:
+                        self.log.emit(f"  -> WARNING: No dialogues detected in any frame of {os.path.basename(video_path)}.")
+                        self.log.emit(f"     The VLM returned empty results. Check if the model supports vision/image input.")
+                    
+                    # 3. 타임라인 정제
+                    refined_results = []
+                    if analysis_results:
+                        for i in range(len(analysis_results)):
+                            curr = analysis_results[i]
+                            is_duplicate = False
+                            if i > 0:
+                                prev = analysis_results[i-1]
+                                if prev['text'] == curr['text'] and prev['color'] == curr['color']:
+                                    refined_results[-1]['end'] = curr['start'] + 1.5
+                                    is_duplicate = True
+                            
+                            if not is_duplicate:
+                                if i > 0 and refined_results:
+                                    refined_results[-1]['end'] = curr['start']
+                                refined_results.append(curr)
+
+                    # 4. 선택된 포맷으로 저장
+                    if self.output_format == "SRT":
+                        exporter.generate_srt(refined_results, subtitle_path)
+                    else:
+                        exporter.generate_ass(refined_results, subtitle_path)
+                    
+                    processed_count += 1
+                    last_results = refined_results
+                    self.log.emit(f"Successfully saved {self.output_format}: {os.path.basename(subtitle_path)}")
+                finally:
+                    # 성공/실패/에러 무관하게 항상 임시 폴더 삭제
+                    if os.path.exists(temp_dir):
+                        shutil.rmtree(temp_dir, ignore_errors=True)
+                        self.log.emit(f"  -> Cleaned up temp folder: {os.path.basename(temp_dir)}")
 
             self.finished.emit(processed_count, last_results)
 
