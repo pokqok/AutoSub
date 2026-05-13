@@ -392,7 +392,7 @@ class SubtitleVLMApp(QMainWindow):
         QApplication.processEvents()
 
         try:
-            client = VLMClient(api_key, model_name, base_url)
+            client = LLMClient(api_key, model_name, base_url)
             response = client.test_connection()
             self.log_window.append(f"[TEST] ✅ API Connection OK! Response: '{response}'")
             self.status_label.setText("API Connection OK")
@@ -403,10 +403,12 @@ class SubtitleVLMApp(QMainWindow):
             msg_box = QMessageBox(self)
             msg_box.setWindowTitle("API Test Failed")
             msg_box.setIcon(QMessageBox.Critical)
-            msg_box.setText("API Connection Test Failed:")
-            msg_box.setInformativeText(str(e))
+            # 전체 텍스트를 setText에 넣어 한 번에 복사 가능하게
+            full_text = f"API Connection Test Failed:\n\n{str(e)}"
+            msg_box.setText(full_text)
             msg_box.setStandardButtons(QMessageBox.Ok)
             msg_box.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
+            msg_box.exec()
             msg_box.exec()
 
     def start_process(self):
@@ -524,8 +526,9 @@ class SubtitleVLMApp(QMainWindow):
         msg_box = QMessageBox(self)
         msg_box.setWindowTitle("Analysis Error")
         msg_box.setIcon(QMessageBox.Critical)
-        msg_box.setText("An error occurred during analysis:")
-        msg_box.setInformativeText(error_msg)
+        # 전체 텍스트를 setText에 넣어 한 번에 복사 가능하게
+        full_text = f"An error occurred during analysis:\n\n{error_msg}"
+        msg_box.setText(full_text)
         msg_box.setStandardButtons(QMessageBox.Ok)
         # 텍스트를 마우스로 선택/복사 가능하게 설정
         msg_box.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
