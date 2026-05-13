@@ -11,8 +11,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QThread, Signal
 
-from core.sampler import SubtitleSampler
-from core.vlm_client import VLMClient
+from core.ocr_extractor import OCRExtractor
+from core.llm_client import LLMClient
 from core.subtitle_exporter import SubtitleExporter
 
 CONFIG_FILE = "config.json"
@@ -20,18 +20,18 @@ VIDEO_EXTENSIONS = ('.mp4', '.mkv', '.avi', '.mov', '.flv', '.wmv')
 
 class AnalysisWorker(QThread):
     """
-    비디오 리스트를 순회하며 프레임 추출 -> VLM 분석 -> 자막 생성을 수행하는 백그라운드 스레드
+    비디오 리스트를 순회하며 OCR 추출 -> LLM 정제/번역 -> 자막 생성을 수행하는 백그라운드 스레드
     """
-    progress = Signal(int, int, str) 
+    progress = Signal(int, int, str)
     log = Signal(str)
-    finished = Signal(int, object) 
+    finished = Signal(int, object)
     error = Signal(str)
 
     def __init__(self, video_list, settings, output_format="SRT"):
         super().__init__()
         self.video_list = video_list
         self.settings = settings
-        self.output_format = output_format # "SRT" 또는 "ASS"
+        self.output_format = output_format
 
     def run(self):
         try:
@@ -39,120 +39,72 @@ class AnalysisWorker(QThread):
             model_name = self.settings.get('model_name', '')
             base_url = self.settings.get('base_url', '')
             custom_prompt = self.settings.get('custom_prompt', '')
+            ocr_interval = self.settings.get('ocr_interval', 0.3)
 
             if not api_key:
                 self.error.emit("API Key is missing!")
                 return
 
-            client = VLMClient(api_key, model_name, base_url)
-            
-            # 샘플링 전 API 연결 사전 테스트
+            client = LLMClient(api_key, model_name, base_url)
             self.log.emit("Pre-flight API connection test...")
             try:
                 _ = client.test_connection()
                 self.log.emit("  -> API connection verified.")
             except Exception as e:
-                self.error.emit(f"API Connection Test Failed BEFORE sampling:\n{str(e)}\n\n"
+                self.error.emit(f"API Connection Test Failed BEFORE processing:\n{str(e)}\n\n"
                                 f"Please fix your API Key, URL, or Model Name before starting analysis.")
                 return
-            
-            sampler = SubtitleSampler()
+
+            extractor = OCRExtractor(interval_sec=ocr_interval)
             exporter = SubtitleExporter()
-            
+
             processed_count = 0
             total_videos = len(self.video_list)
             last_results = []
 
             for idx, video_path in enumerate(self.video_list):
                 self.log.emit(f"[{idx+1}/{total_videos}] Processing: {os.path.basename(video_path)}")
-                
-                # 출력 경로 설정 (SRT 또는 ASS)
+
                 ext = ".srt" if self.output_format == "SRT" else ".ass"
                 subtitle_path = os.path.splitext(video_path)[0] + ext
-                
-                # 임시 프레임 저장 폴더
-                temp_dir = os.path.join(os.path.dirname(video_path), "vlm_temp")
-                
-                # 기존 잔여 캐시 정리 (이전 실행이나 강제종료로 남은 폴더)
-                if os.path.exists(temp_dir):
-                    shutil.rmtree(temp_dir, ignore_errors=True)
-                    self.log.emit(f"  -> Cleaned up old temp folder: {os.path.basename(temp_dir)}")
-                
-                # 성공/실패/에러 무관하게 항상 임시 폴더를 삭제하도록 try/finally로 감쌈
+
+                # Phase 1: OCR 추출
+                self.log.emit(f"  Phase 1/2: OCR extracting Japanese text (interval={ocr_interval}s)...")
                 try:
-                    # 1. 프레임 추출
-                    def update_sampling_progress(curr, total):
-                        self.progress.emit(curr, total, f"Sampling frames for {os.path.basename(video_path)}...")
-                    
-                    sampled_frames = sampler.extract_frames(video_path, temp_dir, progress_callback=update_sampling_progress)
-                    self.log.emit(f"  -> Extracted {len(sampled_frames)} frames to {os.path.basename(temp_dir)} (min_interval={sampler.min_interval_sec}s, max_limit={sampler.max_frames})")
-                    
-                    if not sampled_frames:
-                        self.error.emit(f"No frames extracted from {os.path.basename(video_path)}. "
-                                        f"The video might not have subtitle changes in the bottom {sampler.roi_bottom_percent}% region.")
-                        return
-                    
-                    # 2. VLM 분석 및 번역
-                    self.log.emit(f"Analyzing {len(sampled_frames)} frames with model '{model_name}'...")
-                    analysis_results = []
-                    
-                    glossary = self.settings.get('glossary', {})
-                    glossary_text = "\n".join([f"{k} -> {v}" for k, v in glossary.items()])
-                    final_custom_prompt = f"{custom_prompt}\n\nGlossary Guidelines:\n{glossary_text}" if glossary_text else custom_prompt
+                    def ocr_progress(curr, total):
+                        self.progress.emit(curr, total, f"OCR processing {os.path.basename(video_path)}...")
+                    ocr_results = extractor.extract(video_path, progress_callback=ocr_progress)
+                except Exception as e:
+                    self.error.emit(f"OCR Error ({os.path.basename(video_path)}): {str(e)}")
+                    return
 
-                    for i, (ts, path) in enumerate(sampled_frames):
-                        self.progress.emit(i+1, len(sampled_frames), f"Sending frame {i+1}/{len(sampled_frames)} to VLM...")
-                        try:
-                            res = client.analyze_frame(path, custom_prompt=final_custom_prompt)
-                        except Exception as e:
-                            self.error.emit(f"VLM Error on frame {i+1} ({os.path.basename(path)}):\n{str(e)}")
-                            return
-                        
-                        if 'dialogues' in res:
-                            for dlg in res['dialogues']:
-                                analysis_results.append({
-                                    "start": ts,
-                                    "end": ts + 1.5,
-                                    "original": dlg.get('original', ''),
-                                    "text": dlg.get('translated', ''),
-                                    "color": dlg.get('color', '#FFFFFF')
-                                })
-                    
-                    if not analysis_results:
-                        self.log.emit(f"  -> WARNING: No dialogues detected in any frame of {os.path.basename(video_path)}.")
-                        self.log.emit(f"     The VLM returned empty results. Check if the model supports vision/image input.")
-                    
-                    # 3. 타임라인 정제
-                    refined_results = []
-                    if analysis_results:
-                        for i in range(len(analysis_results)):
-                            curr = analysis_results[i]
-                            is_duplicate = False
-                            if i > 0:
-                                prev = analysis_results[i-1]
-                                if prev['text'] == curr['text'] and prev['color'] == curr['color']:
-                                    refined_results[-1]['end'] = curr['start'] + 1.5
-                                    is_duplicate = True
-                            
-                            if not is_duplicate:
-                                if i > 0 and refined_results:
-                                    refined_results[-1]['end'] = curr['start']
-                                refined_results.append(curr)
+                self.log.emit(f"  -> OCR extracted {len(ocr_results)} raw lines.")
+                if not ocr_results:
+                    self.log.emit(f"  -> WARNING: No text detected in {os.path.basename(video_path)}.")
+                    continue
 
-                    # 4. 선택된 포맷으로 저장
-                    if self.output_format == "SRT":
-                        exporter.generate_srt(refined_results, subtitle_path)
-                    else:
-                        exporter.generate_ass(refined_results, subtitle_path)
-                    
-                    processed_count += 1
-                    last_results = refined_results
-                    self.log.emit(f"Successfully saved {self.output_format}: {os.path.basename(subtitle_path)}")
-                finally:
-                    # 성공/실패/에러 무관하게 항상 임시 폴더 삭제
-                    if os.path.exists(temp_dir):
-                        shutil.rmtree(temp_dir, ignore_errors=True)
-                        self.log.emit(f"  -> Cleaned up temp folder: {os.path.basename(temp_dir)}")
+                # Phase 2: LLM 정제/번역
+                self.log.emit(f"  Phase 2/2: LLM refining + translating with '{model_name}'...")
+                try:
+                    final_results = client.translate_and_refine(ocr_results, custom_prompt=custom_prompt)
+                except Exception as e:
+                    self.error.emit(f"LLM Error ({os.path.basename(video_path)}): {str(e)}")
+                    return
+
+                self.log.emit(f"  -> LLM returned {len(final_results)} refined lines.")
+                if not final_results:
+                    self.log.emit(f"  -> WARNING: LLM returned empty result for {os.path.basename(video_path)}.")
+                    continue
+
+                # Save
+                if self.output_format == "SRT":
+                    exporter.generate_srt(final_results, subtitle_path)
+                else:
+                    exporter.generate_ass(final_results, subtitle_path)
+
+                processed_count += 1
+                last_results = final_results
+                self.log.emit(f"Successfully saved {self.output_format}: {os.path.basename(subtitle_path)}")
 
             self.finished.emit(processed_count, last_results)
 
@@ -502,8 +454,9 @@ class SubtitleVLMApp(QMainWindow):
             self.edit_table.insertRow(row)
             self.edit_table.setItem(row, 0, QTableWidgetItem(f"{sub['start']:.2f}"))
             self.edit_table.setItem(row, 1, QTableWidgetItem(f"{sub['end']:.2f}"))
-            self.edit_table.setItem(row, 2, QTableWidgetItem(sub['text']))
-            self.edit_table.setItem(row, 3, QTableWidgetItem(sub.get('color', '#FFFFFF')))
+            self.edit_table.setItem(row, 2, QTableWidgetItem(sub.get('original', '')))
+            self.edit_table.setItem(row, 3, QTableWidgetItem(sub.get('translated', '')))
+            self.edit_table.setItem(row, 4, QTableWidgetItem(sub.get('position', 'bottom-center')))
 
     def export_subtitles(self):
         if not self.video_list_widget.count():
@@ -516,7 +469,7 @@ class SubtitleVLMApp(QMainWindow):
         glossary = self.settings.get('glossary', {})
         
         for i in range(self.edit_table.rowCount()):
-            text = self.edit_table.item(i, 2).text()
+            text = self.edit_table.item(i, 3).text()
             for k, v in glossary.items():
                 text = text.replace(k, v)
                 
@@ -524,7 +477,7 @@ class SubtitleVLMApp(QMainWindow):
                 "start": float(self.edit_table.item(i, 0).text()),
                 "end": float(self.edit_table.item(i, 1).text()),
                 "text": text,
-                "color": self.edit_table.item(i, 3).text()
+                "color": "#FFFFFF"
             })
         
         exporter = SubtitleExporter()

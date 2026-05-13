@@ -2,3 +2,8 @@ opencv-python
 numpy
 requests
 PySide6
+paddleocr
+# NOTE: paddleocr also requires paddlepaddle or paddlepaddle-gpu.
+# Install the appropriate one for your environment:
+#   CPU: pip install paddlepaddle
+#   GPU (CUDA 12): pip install paddlepaddle-gpu
