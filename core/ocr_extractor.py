@@ -249,3 +249,50 @@ class OCRExtractor:
                 last_timestamp = curr_t
                 if progress_callback:
                     progress_callback(frame_idx, total_frames)
+
+                try:
+                    ocr_res = self.ocr.ocr(processed)
+                except Exception as e:
+                    self._log(f"  [OCR Error frame {frame_idx}] {str(e)}")
+                    ocr_res = None
+
+                current_raw, current_pos = self._parse_ocr_result(ocr_res, frame.shape, frame_idx)
+
+                lines = self._normalize_ocr_result(ocr_res)
+                total_raw_lines += len(lines)
+                if current_raw:
+                    total_valid_lines += 1
+
+                if current_raw != buffered_text:
+                    if buffered_text != "" and (
+                        current_raw == "" or
+                        SequenceMatcher(None, current_raw, buffered_text).ratio() < self.similarity_threshold
+                    ):
+                        if not self._is_junk_text(buffered_text):
+                            results.append({
+                                "start": start_time,
+                                "end": curr_t,
+                                "original": buffered_text,
+                                "position": buffered_pos
+                            })
+                        start_time = curr_t if current_raw != "" else -1.0
+
+                    buffered_text = current_raw
+                    buffered_pos = current_pos
+
+        cap.release()
+
+        if buffered_text and not self._is_junk_text(buffered_text):
+            if start_time < 0:
+                start_time = last_timestamp
+            results.append({
+                "start": start_time,
+                "end": last_timestamp,
+                "original": buffered_text,
+                "position": buffered_pos
+            })
+
+        self._log(f"  [OCR Summary] total frames checked: {frame_idx // interval_frames}, "
+                  f"raw lines detected: {total_raw_lines}, valid text frames: {total_valid_lines}, "
+                  f"final segments: {len(results)}")
+        return results

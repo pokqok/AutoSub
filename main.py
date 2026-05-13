@@ -66,6 +66,19 @@ class AnalysisWorker(QThread):
                 extractor = OCRExtractor(interval_sec=ocr_interval, log_callback=lambda msg: self.log.emit(msg))
             exporter = SubtitleExporter()
 
+            # OCR 엔진 미리 초기화 (실패하면 즉시 에러, 프레임 처리 전에)
+            self.log.emit("Warming up OCR engine (first run may download models)...")
+            try:
+                if ocr_engine == "PaddleOCR":
+                    extractor._init_ocr()
+                else:
+                    extractor._load_model()
+                self.log.emit("  -> OCR engine ready.")
+            except Exception as e:
+                self.error.emit(f"OCR Engine initialization failed:\n{str(e)}\n\n"
+                                f"This usually means model download failed or PaddleOCR/paddlepaddle is not installed correctly.")
+                return
+
             processed_count = 0
             total_videos = len(self.video_list)
             last_results = []
