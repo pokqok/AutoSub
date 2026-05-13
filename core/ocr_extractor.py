@@ -224,13 +224,15 @@ class OCRExtractor:
                     new_h = int(h * scale)
                     processed = cv2.resize(processed, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-                # contiguous uint8 array로 확실히 변환 (특정 PaddleOCR 버전 호환용)
-                processed = np.ascontiguousarray(processed.astype(np.uint8))
-
+                # 원본 BGR 프레임을 그대로 PaddleOCR에 넘김 (grayscale 변환 내부에서 처리)
+                # 또는 내부에서 처리하도록 원본 그대로
                 try:
-                    ocr_res = self.ocr.ocr(processed)
+                    import traceback
+                    ocr_res = self.ocr.ocr(frame)
                 except Exception as e:
+                    tb = traceback.format_exc()
                     self._log(f"  [OCR Error frame {frame_idx}] {str(e)}")
+                    self._log(f"  [OCR Traceback] {tb}")
                     ocr_res = None
 
                 current_raw, current_pos = self._parse_ocr_result(ocr_res, frame.shape, frame_idx)
