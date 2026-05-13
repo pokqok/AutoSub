@@ -86,7 +86,7 @@ class OCRExtractor:
         lines = self._normalize_ocr_result(ocr_res)
         h, w = frame_shape[:2]
 
-        if frame_idx <= 5 or (not valid_lines and lines):
+        if frame_idx <= 5:
             raw_info = []
             for l in lines:
                 text, conf = self._safe_get_text_conf(l)
