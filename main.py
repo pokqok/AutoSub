@@ -489,7 +489,16 @@ class SubtitleVLMApp(QMainWindow):
         self.start_btn.setEnabled(True)
         self.status_label.setText("Error")
         self.add_log(f"\n❌ Critical Error: {error_msg}")
-        QMessageBox.critical(self, "Analysis Error", error_msg)
+        
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Analysis Error")
+        msg_box.setIcon(QMessageBox.Critical)
+        msg_box.setText("An error occurred during analysis:")
+        msg_box.setInformativeText(error_msg)
+        msg_box.setStandardButtons(QMessageBox.Ok)
+        # 텍스트를 마우스로 선택/복사 가능하게 설정
+        msg_box.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
+        msg_box.exec()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
