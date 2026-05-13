@@ -20,6 +20,13 @@ class OCRExtractor:
         self.ocr = None
 
     def _init_ocr(self):
+        import os
+        # Paddle/PaddleOCR의 C++ GLog stderr 출력 억제 (0=INFO, 1=WARNING, 2=ERROR, 3=FATAL)
+        os.environ['GLOG_minloglevel'] = '2'
+        # paddleocr python logging도 억제
+        import logging
+        logging.getLogger('ppocr').setLevel(logging.WARNING)
+        logging.getLogger('paddle').setLevel(logging.WARNING)
         from paddleocr import PaddleOCR
         self.ocr = PaddleOCR(
             use_angle_cls=True,

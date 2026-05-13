@@ -86,6 +86,10 @@ class AnalysisWorker(QThread):
                     self.error.emit(f"OCR Error ({os.path.basename(video_path)}): {str(e)}")
                     return
 
+                if ocr_results is None:
+                    self.log.emit("  -> OCR returned None (initialization failed).")
+                    self.error.emit(f"OCR initialization failed for {os.path.basename(video_path)}. Check model download or PaddleOCR installation.")
+                    return
                 self.log.emit(f"  -> OCR extracted {len(ocr_results)} raw lines.")
                 if not ocr_results:
                     self.log.emit(f"  -> WARNING: OCR returned 0 segments for {os.path.basename(video_path)}. "
@@ -132,9 +136,15 @@ class SubtitleVLMApp(QMainWindow):
         self.load_settings()
         self.init_ui()
         self.current_analysis = []
+        # 실행때마다 덮어씌워지는 로그 파일
+        self.log_file = open("subtitle_vlm.log", "w", encoding="utf-8")
+        self.log_file.write(f"=== AutoSub Log - {__import__('datetime').datetime.now().isoformat()} ===\n")
+        self.log_file.flush()
 
     def closeEvent(self, event):
         self.save_settings()
+        if getattr(self, 'log_file', None):
+            self.log_file.close()
         event.accept()
 
     def init_ui(self):
@@ -466,6 +476,9 @@ class SubtitleVLMApp(QMainWindow):
 
     def add_log(self, message):
         self.log_window.append(message)
+        if getattr(self, 'log_file', None):
+            self.log_file.write(message + "\n")
+            self.log_file.flush()
 
     def process_finished(self, count, results):
         self.start_btn.setEnabled(True)
