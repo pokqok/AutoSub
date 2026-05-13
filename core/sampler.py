@@ -12,9 +12,6 @@ class SubtitleSampler:
         self.diff_threshold = diff_threshold
 
     def extract_frames(self, video_path: str, output_folder: str, progress_callback=None) -> List[Tuple[float, str]]:
-        """
-        영상을 분석하여 자막 변화가 있을 때의 프레임들을 저장하고 (시간, 경로) 리스트를 반환합니다.
-        """
         if not os.path.exists(output_folder):
             os.makedirs(output_folder)
 
@@ -26,8 +23,6 @@ class SubtitleSampler:
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        
-        # ROI 설정: 하단 영역 분석
         roi_top = int(height * (1 - self.roi_bottom_percent / 100))
         
         prev_edge_roi = None
@@ -36,18 +31,14 @@ class SubtitleSampler:
 
         while cap.isOpened():
             ret, frame = cap.read()
-            if not ret:
-                break
-            
+            if not ret: break
             frame_count += 1
             
-            # 1. ROI 추출 및 전처리
             roi = frame[roi_top:height, 0:width]
             gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
             blurred = cv2.GaussianBlur(gray, (5, 5), 0)
             edges = cv2.Canny(blurred, 50, 150)
 
-            # 2. 변화 감지 (Edge-based)
             is_changed = True
             if prev_edge_roi is not None:
                 diff = cv2.absdiff(edges, prev_edge_roi)
@@ -62,7 +53,7 @@ class SubtitleSampler:
                 saved_frames.append((timestamp, filepath))
                 prev_edge_roi = edges
             
-            if progress_callback:
+            if progress_callback and frame_count % 100 == 0:
                 progress_callback(frame_count, total_frames)
 
         cap.release()

@@ -1,106 +1,113 @@
 import sys
 import os
 import json
+import shutil
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QLabel, QLineEdit, QPushButton, QFileDialog, QTextEdit, QProgressBar, QComboBox
+    QLabel, QLineEdit, QPushButton, QFileDialog, QTextEdit, QProgressBar, QComboBox, QListWidget, QAbstractItemView
 )
 from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtGui import QSashWindow
 
 from core.sampler import SubtitleSampler
 from core.vlm_client import VLMClient
 from core.srt_generator import SRTGenerator
 
 CONFIG_FILE = "config.json"
+VIDEO_EXTENSIONS = ('.mp4', '.mkv', '.avi', '.mov', '.flv', '.wmv')
 
 class WorkerThread(QThread):
-    """
-    VLM 자막 생성 파이프라인을 수행하는 백그라운드 스레드
-    """
-    progress = Signal(int, int) # 현재 프레임, 전체 프레임
+    progress = Signal(int, int, str) # current, total, status_text
     log = Signal(str)
-    finished = Signal(str)
+    finished = Signal(int) # processed count
     error = Signal(str)
 
-    def __init__(self, settings):
+    def __init__(self, video_list, settings):
         super().__init__()
+        self.video_list = video_list
         self.settings = settings
 
     def run(self):
         try:
-            video_path = self.settings['video_path']
-            output_folder = self.settings['output_folder']
             api_key = self.settings['api_key']
             model_name = self.settings['model_name']
             base_url = self.settings['base_url']
-
-            if not video_path or not api_key:
-                self.error.emit("비디오 경로와 API 키를 모두 입력해주세요.")
+            
+            if not api_key:
+                self.error.emit("API Key is missing!")
                 return
 
-            # 1. 프레임 추출
-            self.log.emit("Step 1: 자막 변화 감지 및 프레임 추출 중...")
-            sampler = SubtitleSampler()
-            frames_dir = os.path.join(output_folder, "temp_frames")
-            
-            def update_progress(curr, total):
-                self.progress.emit(curr, total)
-
-            sampled_frames = sampler.extract_frames(video_path, frames_dir, progress_callback=update_progress)
-            self.log.emit(f"총 {len(sampled_frames)}개의 변화 프레임이 검출되었습니다.")
-
-            # 2. VLM 분석 및 번역
-            self.log.emit("Step 2: VLM 분석 및 번역 진행 중 (시간이 소요될 수 있습니다)...")
             client = VLMClient(api_key, model_name, base_url)
-            analysis_results = []
-
-            for i, (ts, path) in enumerate(sampled_frames):
-                res = client.analyze_frame(path)
-                if res and res.get('is_dialogue'):
-                    translated_text = res.get('translated', '')
-                    analysis_results.append((ts, translated_text))
-                    self.log.emit(f"[{ts:.2f}s] 추출 성공: {translated_text}")
-                else:
-                    self.log.emit(f"[{ts:.2f}s] 대사 없음.")
-                
-                # 진행률 업데이트 (프레임 개수 기준)
-                self.progress.emit(i + 1, len(sampled_frames))
-
-            # 3. SRT 파일 생성
-            self.log.emit("Step 3: 최종 자막 파일 생성 중...")
-            srt_path = os.path.join(output_folder, "output_subtitles.srt")
+            sampler = SubtitleSampler()
             generator = SRTGenerator()
-            generator.generate(analysis_results, srt_path)
+            
+            processed_count = 0
+            total_videos = len(self.video_list)
 
-            self.finished.emit(srt_path)
+            for idx, video_path in enumerate(self.video_list):
+                # 1. SRT 존재 여부 확인 (건너뛰기 기능)
+                srt_path = os.path.splitext(video_path)[0] + ".srt"
+                if os.path.exists(srt_path):
+                    self.log.emit(f"Skipping: SRT already exists for {os.path.basename(video_path)}")
+                    continue
+
+                self.log.emit(f"Processing: {os.path.basename(video_path)}...")
+                
+                # 임시 폴더 설정
+                temp_dir = os.path.join(os.path.dirname(video_path), "vlm_temp")
+                
+                # 2. 프레임 추출
+                def update_sampling_progress(curr, total):
+                    self.progress.emit(curr, total, f"Sampling frames for {os.path.basename(video_path)}...")
+                
+                sampled_frames = sampler.extract_frames(video_path, temp_dir, progress_callback=update_sampling_progress)
+                
+                # 3. VLM 분석
+                analysis_results = []
+                for i, (ts, path) in enumerate(sampled_frames):
+                    self.progress.emit(i+1, len(sampled_frames), f"Analyzing frame {i+1}/{len(sampled_frames)}...")
+                    res = client.analyze_frame(path)
+                    if res and res.get('is_dialogue'):
+                        analysis_results.append((ts, res.get('translated', '')))
+                
+                # 4. SRT 생성 및 임시파일 정리
+                generator.generate(analysis_results, srt_path)
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                
+                processed_count += 1
+                self.log.emit(f"Saved: {srt_path}")
+
+            self.finished.emit(processed_count)
 
         except Exception as e:
-            self.error.emit(f"오류 발생: {str(e)}")
+            self.error.emit(str(e))
 
 class SubtitleVLMApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("VLM Japanese Subtitle Extractor")
-        self.setMinimumSize(700, 500)
+        self.setWindowTitle("AI Subtitle VLM - Japanese to Korean")
+        self.setMinimumSize(800, 600)
+        self.setAcceptDrops(True)
         self.load_settings()
         self.init_ui()
 
     def init_ui(self):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        layout = QVBoxLayout(central_widget)
+        main_layout = QHBoxLayout(central_widget)
 
-        # --- API 설정 구역 ---
+        # Left Panel: Settings & Controls
+        left_panel = QVBoxLayout()
+        
+        # Settings Group
         settings_group = QVBoxLayout()
         
-        # API URL
         url_layout = QHBoxLayout()
         url_layout.addWidget(QLabel("API Base URL:"))
         self.url_input = QLineEdit(self.settings.get('base_url', 'https://api.deepseek.com'))
         url_layout.addWidget(self.url_input)
         settings_group.addLayout(url_layout)
 
-        # API Key
         key_layout = QHBoxLayout()
         key_layout.addWidget(QLabel("API Key:"))
         self.key_input = QLineEdit(self.settings.get('api_key', ''))
@@ -108,7 +115,6 @@ class SubtitleVLMApp(QMainWindow):
         key_layout.addWidget(self.key_input)
         settings_group.addLayout(key_layout)
 
-        # Model Selection
         model_layout = QHBoxLayout()
         model_layout.addWidget(QLabel("Model:"))
         self.model_combo = QComboBox()
@@ -116,59 +122,74 @@ class SubtitleVLMApp(QMainWindow):
         self.model_combo.setCurrentText(self.settings.get('model_name', 'deepseek-v4-pro'))
         model_layout.addWidget(self.model_combo)
         settings_group.addLayout(model_layout)
+        
+        left_panel.addLayout(settings_group)
+        left_panel.addWidget(QLabel("----------------------------------"))
 
-        layout.addLayout(settings_group)
-        layout.addWidget(QLabel("-----------------------------------------------------------"))
+        # File Queue
+        left_panel.addWidget(QLabel("Video Queue (Drag & Drop Folders/Files)"))
+        self.video_list_widget = QListWidget()
+        left_panel.addWidget(self.video_list_widget)
 
-        # --- 파일 설정 구역 ---
-        file_group = QVBoxLayout()
+        btn_add_folder = QPushButton("Add Folder (Recursive)")
+        btn_add_folder.clicked.connect(self.add_folder)
+        left_panel.addWidget(btn_add_folder)
 
-        # 입력 영상
-        video_layout = QHBoxLayout()
-        self.video_input = QLineEdit()
-        self.video_input.setPlaceholderText("영상 파일 경로를 선택하세요...")
-        video_layout.addWidget(self.video_input)
-        btn_video = QPushButton("찾아보기")
-        btn_video.clicked.connect(self.select_video)
-        video_layout.addWidget(btn_video)
-        file_group.addLayout(video_layout)
+        btn_clear = QPushButton("Clear List")
+        btn_clear.clicked.connect(self.clear_list)
+        left_panel.addWidget(btn_clear)
 
-        # 출력 폴더
-        folder_layout = QHBoxLayout()
-        self.folder_input = QLineEdit()
-        self.folder_input.setPlaceholderText("결과 저장 폴더를 선택하세요...")
-        folder_layout.addWidget(self.folder_input)
-        btn_folder = QPushButton("찾아보기")
-        btn_folder.clicked.connect(self.select_folder)
-        folder_layout.addWidget(btn_folder)
-        file_group.addLayout(folder_layout)
-
-        layout.addLayout(file_group)
-
-        # --- 실행 구역 ---
-        self.start_btn = QPushButton("자막 추출 시작")
+        self.start_btn = QPushButton("Start Processing")
         self.start_btn.setMinimumHeight(50)
-        self.start_btn.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; font-size: 16px;")
+        self.start_btn.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold;")
         self.start_btn.clicked.connect(self.start_process)
-        layout.addWidget(self.start_btn)
+        left_panel.addWidget(self.start_btn)
 
+        main_layout.addLayout(left_panel, 1)
+
+        # Right Panel: Logs & Progress
+        right_panel = QVBoxLayout()
+        
         self.progress_bar = QProgressBar()
-        layout.addWidget(self.progress_bar)
+        right_panel.addWidget(self.progress_bar)
+        
+        self.status_label = QLabel("Ready")
+        right_panel.addWidget(self.status_label)
 
         self.log_window = QTextEdit()
         self.log_window.setReadOnly(True)
         self.log_window.setStyleSheet("background-color: #1e1e1e; color: #d4d4d4; font-family: Consolas;")
-        layout.addWidget(self.log_window)
+        right_panel.addWidget(self.log_window)
 
-    def select_video(self):
-        path, _ = QFileDialog.getOpenFileName(self, "영상 선택", "", "Video Files (*.mp4 *.mkv *.avi)")
-        if path:
-            self.video_input.setText(path)
+        main_layout.addLayout(right_panel, 2)
 
-    def select_folder(self):
-        path = QFileDialog.getExistingDirectory(self, "저장 폴더 선택")
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.accept()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        for url in event.mimeData().urls():
+            path = url.toLocalFile()
+            self.add_path(path)
+
+    def add_path(self, path):
+        if os.path.isdir(path):
+            for root, dirs, files in os.walk(path):
+                for file in files:
+                    if file.lower().endswith(VIDEO_EXTENSIONS):
+                        self.video_list_widget.addItem(os.path.join(root, file))
+        elif path.lower().endswith(VIDEO_EXTENSIONS):
+            self.video_list_widget.addItem(path)
+
+    def add_folder(self):
+        path = QFileDialog.getExistingDirectory(self, "Select Folder")
         if path:
-            self.folder_input.setText(path)
+            self.add_path(path)
+
+    def clear_list(self):
+        self.video_list_widget.clear()
 
     def load_settings(self):
         if os.path.exists(CONFIG_FILE):
@@ -188,39 +209,45 @@ class SubtitleVLMApp(QMainWindow):
 
     def start_process(self):
         self.save_settings()
+        video_files = [self.video_list_widget.item(i).text() for i in range(self.video_list_widget.count())]
+        
+        if not video_files:
+            self.log_window.append("Please add video files to the list first.")
+            return
+
+        self.start_btn.setEnabled(False)
+        self.log_window.clear()
         
         settings = {
-            "video_path": self.video_input.text(),
-            "output_folder": self.folder_input.text(),
             "api_key": self.key_input.text(),
             "model_name": self.model_combo.currentText(),
             "base_url": self.url_input.text()
         }
 
-        self.start_btn.setEnabled(False)
-        self.log_window.clear()
-        
-        self.worker = WorkerThread(settings)
+        self.worker = WorkerThread(video_files, settings)
         self.worker.progress.connect(self.update_progress)
         self.worker.log.connect(self.add_log)
         self.worker.finished.connect(self.process_finished)
         self.worker.error.connect(self.process_error)
         self.worker.start()
 
-    def update_progress(self, curr, total):
+    def update_progress(self, curr, total, text):
         self.progress_bar.setMaximum(total)
         self.progress_bar.setValue(curr)
+        self.status_label.setText(text)
 
     def add_log(self, message):
         self.log_window.append(message)
 
-    def process_finished(self, srt_path):
+    def process_finished(self, count):
         self.start_btn.setEnabled(True)
-        self.add_log(f"\n✅ 작업 완료! 자막 파일 저장됨: {srt_path}")
+        self.status_label.setText("Ready")
+        self.add_log(f"\n✅ All tasks completed. {count} files processed.")
 
     def process_error(self, error_msg):
         self.start_btn.setEnabled(True)
-        self.add_log(f"\n❌ 오류: {error_msg}")
+        self.status_label.setText("Error")
+        self.add_log(f"\n❌ Critical Error: {error_msg}")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
