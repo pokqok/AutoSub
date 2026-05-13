@@ -60,10 +60,10 @@ class AnalysisWorker(QThread):
             self.log.emit(f"Initializing OCR engine: {ocr_engine}...")
             if ocr_engine == "PaddleOCR-VL-1.5":
                 from core.paddle_vl_extractor import PaddleVLExtractor
-                extractor = PaddleVLExtractor(interval_sec=ocr_interval)
+                extractor = PaddleVLExtractor(interval_sec=ocr_interval, log_callback=lambda msg: self.log.emit(msg))
             else:
                 from core.ocr_extractor import OCRExtractor
-                extractor = OCRExtractor(interval_sec=ocr_interval)
+                extractor = OCRExtractor(interval_sec=ocr_interval, log_callback=lambda msg: self.log.emit(msg))
             exporter = SubtitleExporter()
 
             processed_count = 0
@@ -88,7 +88,11 @@ class AnalysisWorker(QThread):
 
                 self.log.emit(f"  -> OCR extracted {len(ocr_results)} raw lines.")
                 if not ocr_results:
-                    self.log.emit(f"  -> WARNING: No text detected in {os.path.basename(video_path)}.")
+                    self.log.emit(f"  -> WARNING: OCR returned 0 segments for {os.path.basename(video_path)}. "
+                                     f"Possible causes: (1) No Japanese subtitles in video, "
+                                     f"(2) OCR confidence threshold too high, "
+                                     f"(3) Junk filter too strict, "
+                                     f"(4) Wrong OCR engine selected.")
                     continue
 
                 # Phase 2: LLM 정제/번역
