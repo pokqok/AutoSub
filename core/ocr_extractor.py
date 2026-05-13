@@ -228,7 +228,7 @@ class OCRExtractor:
                 # 또는 내부에서 처리하도록 원본 그대로
                 try:
                     import traceback
-                    ocr_res = self.ocr.ocr(frame)
+                    ocr_res = self.ocr.ocr(processed)
                 except Exception as e:
                     tb = traceback.format_exc()
                     self._log(f"  [OCR Error frame {frame_idx}] {str(e)}")

@@ -277,7 +277,7 @@ class SubtitleVLMApp(QMainWindow):
 
         self.review_tab = QWidget()
         review_layout = QVBoxLayout(self.review_tab)
-        self.edit_table = QTableWidget(0, 4) 
+        self.edit_table = QTableWidget(0, 5) 
         self.edit_table.setHorizontalHeaderLabels(["Start", "End", "Text", "Color(HEX)"])
         self.edit_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         review_layout.addWidget(self.edit_table)
@@ -436,7 +436,6 @@ class SubtitleVLMApp(QMainWindow):
             msg_box.setStandardButtons(QMessageBox.Ok)
             msg_box.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
             msg_box.exec()
-            msg_box.exec()
 
     def start_process(self):
         self.save_settings()
@@ -534,7 +533,7 @@ class SubtitleVLMApp(QMainWindow):
             final_subs.append({
                 "start": float(self.edit_table.item(i, 0).text()),
                 "end": float(self.edit_table.item(i, 1).text()),
-                "text": text,
+                "translated": text,
                 "color": "#FFFFFF"
             })
         

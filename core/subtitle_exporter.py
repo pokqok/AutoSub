@@ -65,6 +65,6 @@ class SubtitleExporter:
                 start = self.format_time_ass(sub['start'])
                 end = self.format_time_ass(sub['end'])
                 color_tag = rgb_to_ass_color(sub.get('color', '#FFFFFF'))
-                text = f"{{\\c{color_tag}}}{sub['text']}"
+                text = f"{{\\c{color_tag}}}{sub['translated']}"
                 # Effect 필드는 비워두고 공백 없이 출력
                 f.write(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text}\n")
