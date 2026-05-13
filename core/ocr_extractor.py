@@ -214,9 +214,13 @@ class OCRExtractor:
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
                 processed = clahe.apply(gray)
+                processed = np.ascontiguousarray(processed.astype(np.uint8))
 
                 try:
-                    ocr_res = self.ocr.ocr(processed)
+                    # numpy array 대신 PIL Image로 변환해서 전달 (버전 호환성)
+                    from PIL import Image
+                    pil_img = Image.fromarray(processed)
+                    ocr_res = self.ocr.ocr(pil_img)
                 except Exception as e:
                     self._log(f"  [OCR Error frame {frame_idx}] {str(e)}")
                     ocr_res = None

@@ -1,4 +1,4 @@
-=== AutoSub Log - 2026-05-13T21:58:50.390303 ===
+=== AutoSub Log - 2026-05-13T22:04:21.495708 ===
 Pre-flight API connection test...
   -> API connection verified.
 Initializing OCR engine: PaddleOCR...
@@ -6,67 +6,26 @@ Warming up OCR engine (first run may download models)...
   -> OCR engine ready.
 [1/1] Processing: 日本語_４K_モザなし_アコ露出(ボイス).mp4
   Phase 1/2: OCR extracting Japanese text (interval=0.3s)...
-  [OCR Error frame 18] name 'processed' is not defined
-  [OCR Error frame 36] name 'processed' is not defined
-  [OCR Error frame 54] name 'processed' is not defined
-  [OCR Error frame 72] name 'processed' is not defined
-  [OCR Error frame 90] name 'processed' is not defined
-  [OCR Error frame 108] name 'processed' is not defined
-  [OCR Error frame 126] name 'processed' is not defined
-  [OCR Error frame 144] name 'processed' is not defined
-  [OCR Error frame 162] name 'processed' is not defined
-  [OCR Error frame 180] name 'processed' is not defined
-  [OCR Error frame 198] name 'processed' is not defined
-  [OCR Error frame 216] name 'processed' is not defined
-  [OCR Error frame 234] name 'processed' is not defined
-  [OCR Error frame 252] name 'processed' is not defined
-  [OCR Error frame 270] name 'processed' is not defined
-  [OCR Error frame 288] name 'processed' is not defined
-  [OCR Error frame 306] name 'processed' is not defined
-  [OCR Error frame 324] name 'processed' is not defined
-  [OCR Error frame 342] name 'processed' is not defined
-  [OCR Error frame 360] name 'processed' is not defined
-  [OCR Error frame 378] name 'processed' is not defined
-  [OCR Error frame 396] name 'processed' is not defined
-  [OCR Error frame 414] name 'processed' is not defined
-  [OCR Error frame 432] name 'processed' is not defined
-  [OCR Error frame 450] name 'processed' is not defined
-  [OCR Error frame 468] name 'processed' is not defined
-  [OCR Error frame 486] name 'processed' is not defined
-  [OCR Error frame 504] name 'processed' is not defined
-  [OCR Error frame 522] name 'processed' is not defined
-  [OCR Error frame 540] name 'processed' is not defined
-  [OCR Error frame 558] name 'processed' is not defined
-  [OCR Error frame 576] name 'processed' is not defined
-  [OCR Error frame 594] name 'processed' is not defined
-  [OCR Error frame 612] name 'processed' is not defined
-  [OCR Error frame 630] name 'processed' is not defined
-  [OCR Error frame 648] name 'processed' is not defined
-  [OCR Error frame 666] name 'processed' is not defined
-  [OCR Error frame 684] name 'processed' is not defined
-  [OCR Error frame 702] name 'processed' is not defined
-  [OCR Error frame 720] name 'processed' is not defined
-  [OCR Error frame 738] name 'processed' is not defined
-  [OCR Error frame 756] name 'processed' is not defined
-  [OCR Error frame 774] name 'processed' is not defined
-  [OCR Error frame 792] name 'processed' is not defined
-  [OCR Error frame 810] name 'processed' is not defined
-  [OCR Error frame 828] name 'processed' is not defined
-  [OCR Error frame 846] name 'processed' is not defined
-  [OCR Error frame 864] name 'processed' is not defined
-  [OCR Error frame 882] name 'processed' is not defined
-  [OCR Error frame 900] name 'processed' is not defined
-  [OCR Error frame 918] name 'processed' is not defined
-  [OCR Error frame 936] name 'processed' is not defined
-  [OCR Error frame 954] name 'processed' is not defined
-  [OCR Error frame 972] name 'processed' is not defined
-  [OCR Error frame 990] name 'processed' is not defined
-  [OCR Error frame 1008] name 'processed' is not defined
-  [OCR Error frame 1026] name 'processed' is not defined
-  [OCR Error frame 1044] name 'processed' is not defined
-  [OCR Error frame 1062] name 'processed' is not defined
-  [OCR Error frame 1080] name 'processed' is not defined
-  [OCR Error frame 1098] name 'processed' is not defined
-  [OCR Error frame 1116] name 'processed' is not defined
-  [OCR Error frame 1134] name 'processed' is not defined
-  [OCR Error frame 1152] name 'processed' is not defined
+  [OCR] Starting: video=D:/a/ani/pigtarotaro/Pigtarotaro/日本語_４K_モザなし_アコ露出(ボイス).mp4, fps=60.0, interval=0.3s
+  [OCR Error frame 18] tuple index out of range
+  [OCR Error frame 36] tuple index out of range
+  [OCR Error frame 54] tuple index out of range
+  [OCR Error frame 72] tuple index out of range
+  [OCR Error frame 90] tuple index out of range
+  [OCR Error frame 108] tuple index out of range
+  [OCR Error frame 126] tuple index out of range
+  [OCR Error frame 144] tuple index out of range
+  [OCR Error frame 162] tuple index out of range
+  [OCR Error frame 180] tuple index out of range
+  [OCR Error frame 198] tuple index out of range
+  [OCR Error frame 216] tuple index out of range
+  [OCR Error frame 234] tuple index out of range
+  [OCR Error frame 252] tuple index out of range
+  [OCR Error frame 270] tuple index out of range
+  [OCR Error frame 288] tuple index out of range
+  [OCR Error frame 306] tuple index out of range
+  [OCR Error frame 324] tuple index out of range
+  [OCR Error frame 342] tuple index out of range
+  [OCR Error frame 360] tuple index out of range
+  [OCR Error frame 378] tuple index out of range
+  [OCR Error frame 396] tuple index out of range
