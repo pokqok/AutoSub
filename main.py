@@ -18,21 +18,24 @@ CONFIG_FILE = "config.json"
 VIDEO_EXTENSIONS = ('.mp4', '.mkv', '.avi', '.mov', '.flv', '.wmv')
 
 class AnalysisWorker(QThread):
+    """
+    비디오 리스트를 순회하며 프레임 추출 -> VLM 분석 -> SRT 생성을 수행하는 백그라운드 스레드
+    """
     progress = Signal(int, int, str) 
     log = Signal(str)
-    finished = Signal(List[Dict]) 
+    finished = Signal(int) # 최종 처리 완료된 파일 개수
     error = Signal(str)
 
-    def __init__(self, video_path, settings):
+    def __init__(self, video_list, settings):
         super().__init__()
-        self.video_path = video_path
+        self.video_list = video_list
         self.settings = settings
 
     def run(self):
         try:
-            api_key = self.settings['api_key']
-            model_name = self.settings['model_name']
-            base_url = self.settings['base_url']
+            api_key = self.settings.get('api_key', '')
+            model_name = self.settings.get('model_name', '')
+            base_url = self.settings.get('base_url', '')
             custom_prompt = self.settings.get('custom_prompt', '')
 
             if not api_key:
@@ -41,65 +44,86 @@ class AnalysisWorker(QThread):
 
             client = VLMClient(api_key, model_name, base_url)
             sampler = SubtitleSampler()
+            exporter = SubtitleExporter()
             
-            self.log.emit(f"Sampling frames for {os.path.basename(self.video_path)}...")
-            temp_dir = os.path.join(os.path.dirname(self.video_path), "vlm_temp")
-            
-            def update_sampling_progress(curr, total):
-                self.progress.emit(curr, total, "Extracting frames...")
+            processed_count = 0
+            total_videos = len(self.video_list)
 
-            sampled_frames = sampler.extract_frames(self.video_path, temp_dir, progress_callback=update_sampling_progress)
-            
-            self.log.emit(f"Analyzing {len(sampled_frames)} frames via VLM...")
-            raw_results = []
-            
-            glossary = self.settings.get('glossary', {})
-            glossary_text = "\n".join([f"{k} -> {v}" for k, v in glossary.items()])
-            final_custom_prompt = f"{custom_prompt}\n\nGlossary Guidelines:\n{glossary_text}" if glossary_text else custom_prompt
-
-            for i, (ts, path) in enumerate(sampled_frames):
-                self.progress.emit(i+1, len(sampled_frames), f"Analyzing frame {i+1}/{len(sampled_frames)}...")
-                res = client.analyze_frame(path, custom_prompt=final_custom_prompt)
+            for idx, video_path in enumerate(self.video_list):
+                self.log.emit(f"[{idx+1}/{total_videos}] Processing: {os.path.basename(video_path)}")
                 
-                if res and 'dialogues' in res:
-                    for dlg in res['dialogues']:
-                        raw_results.append({
-                            "start": ts,
-                            "end": ts + 1.5,
-                            "original": dlg.get('original', ''),
-                            "text": dlg.get('translated', ''),
-                            "color": dlg.get('color', '#FFFFFF')
-                        })
-            
-            shutil.rmtree(temp_dir, ignore_errors=True)
-            
-            refined_results = []
-            if raw_results:
-                for i in range(len(raw_results)):
-                    curr = raw_results[i]
-                    is_duplicate = False
-                    if i > 0:
-                        prev = raw_results[i-1]
-                        # 텍스트와 색상이 모두 같아야 병합
-                        if prev['text'] == curr['text'] and prev['color'] == curr['color']:
-                            refined_results[-1]['end'] = curr['start'] + 1.5
-                            is_duplicate = True
-                    
-                    if not is_duplicate:
-                        if i > 0:
-                            if refined_results:
-                                refined_results[-1]['end'] = curr['start']
-                        refined_results.append(curr)
+                # SRT 존재 여부 확인 (건너뛰기)
+                srt_path = os.path.splitext(video_path)[0] + ".srt"
+                if os.path.exists(srt_path):
+                    self.log.emit(f"Skipping: SRT already exists for {os.path.basename(video_path)}")
+                    continue
 
-            self.finished.emit(refined_results)
+                # 임시 프레임 저장 폴더
+                temp_dir = os.path.join(os.path.dirname(video_path), "vlm_temp")
+                
+                # 1. 프레임 추출
+                def update_sampling_progress(curr, total):
+                    self.progress.emit(curr, total, f"Sampling frames for {os.path.basename(video_path)}...")
+                
+                sampled_frames = sampler.extract_frames(video_path, temp_dir, progress_callback=update_sampling_progress)
+                
+                # 2. VLM 분석 및 번역
+                self.log.emit(f"Analyzing {len(sampled_frames)} frames...")
+                analysis_results = []
+                
+                glossary = self.settings.get('glossary', {})
+                glossary_text = "\n".join([f"{k} -> {v}" for k, v in glossary.items()])
+                final_custom_prompt = f"{custom_prompt}\n\nGlossary Guidelines:\n{glossary_text}" if glossary_text else custom_prompt
+
+                for i, (ts, path) in enumerate(sampled_frames):
+                    self.progress.emit(i+1, len(sampled_frames), f"Analyzing frame {i+1}/{len(sampled_frames)}...")
+                    res = client.analyze_frame(path, custom_prompt=final_custom_prompt)
+                    
+                    if res and 'dialogues' in res:
+                        for dlg in res['dialogues']:
+                            analysis_results.append({
+                                "start": ts,
+                                "end": ts + 1.5,
+                                "original": dlg.get('original', ''),
+                                "text": dlg.get('translated', ''),
+                                "color": dlg.get('color', '#FFFFFF')
+                            })
+                
+                # 3. 타임라인 정제 (중복 제거 및 시간 보정)
+                refined_results = []
+                if analysis_results:
+                    for i in range(len(analysis_results)):
+                        curr = analysis_results[i]
+                        is_duplicate = False
+                        if i > 0:
+                            prev = analysis_results[i-1]
+                            if prev['text'] == curr['text'] and prev['color'] == curr['color']:
+                                refined_results[-1]['end'] = curr['start'] + 1.5
+                                is_duplicate = True
+                        
+                        if not is_duplicate:
+                            if i > 0 and refined_results:
+                                refined_results[-1]['end'] = curr['start']
+                            refined_results.append(curr)
+
+                # 4. SRT 파일 저장
+                exporter.generate_srt(refined_results, srt_path)
+                
+                # 임시 파일 정리
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                processed_count += 1
+                self.log.emit(f"Successfully saved SRT: {os.path.basename(srt_path)}")
+
+            self.finished.emit(processed_count)
 
         except Exception as e:
-            self.error.emit(str(e))
+            import traceback
+            self.error.emit(f"Critical Error: {str(e)}\n{traceback.format_exc()}")
 
 class SubtitleVLMApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("AI Subtitle VLM Pro - Visual & Glossary Edition")
+        self.setWindowTitle("AI Subtitle VLM Pro - Multi-Dialogue & Color Edition")
         self.setMinimumSize(1100, 700)
         self.setAcceptDrops(True)
         self.load_settings()
@@ -111,6 +135,7 @@ class SubtitleVLMApp(QMainWindow):
         self.setCentralWidget(central_widget)
         main_layout = QHBoxLayout(central_widget)
 
+        # Left Panel: Settings & Queue
         left_panel = QVBoxLayout()
         settings_group = QVBoxLayout()
         
@@ -131,14 +156,12 @@ class SubtitleVLMApp(QMainWindow):
         self.prompt_input.setMaximumHeight(100)
         settings_group.addWidget(self.prompt_input)
 
-        # Glossary Section
-        glossary_group = QVBoxLayout()
-        glossary_group.addWidget(QLabel("Glossary (Key=Value, one per line):"))
+        settings_group.addWidget(QLabel("Glossary (Key=Value, one per line):"))
         self.glossary_input = QTextEdit()
         glossary_text = "\n".join([f"{k}={v}" for k, v in self.settings.get('glossary', {}).items()])
         self.glossary_input.setPlainText(glossary_text)
         self.glossary_input.setMaximumHeight(100)
-        glossary_group.addWidget(self.glossary_input)
+        settings_group.addWidget(self.glossary_input)
         
         glossary_btns = QHBoxLayout()
         btn_load_glossary = QPushButton("Load Glossary File")
@@ -147,9 +170,8 @@ class SubtitleVLMApp(QMainWindow):
         btn_save_glossary.clicked.connect(self.save_glossary_file)
         glossary_btns.addWidget(btn_load_glossary)
         glossary_btns.addWidget(btn_save_glossary)
-        glossary_group.addLayout(glossary_btns)
+        settings_group.addLayout(glossary_btns)
         
-        settings_group.addLayout(glossary_group)
         left_panel.addLayout(settings_group)
         left_panel.addWidget(QLabel("----------------------------------"))
 
@@ -174,6 +196,7 @@ class SubtitleVLMApp(QMainWindow):
 
         main_layout.addLayout(left_panel, 1)
 
+        # Right Panel: Logs & Review
         right_panel = QVBoxLayout()
         self.tabs = QTabWidget()
 
@@ -250,7 +273,6 @@ class SubtitleVLMApp(QMainWindow):
     def load_glossary_file(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open Glossary File", "", "Text Files (*.txt);;JSON Files (*.json)")
         if not path: return
-        
         try:
             if path.endswith('.json'):
                 with open(path, 'r', encoding='utf-8') as f:
@@ -267,7 +289,6 @@ class SubtitleVLMApp(QMainWindow):
     def save_glossary_file(self):
         path, _ = QFileDialog.getSaveFileName(self, "Save Glossary File", "", "Text Files (*.txt);;JSON Files (*.json)")
         if not path: return
-        
         try:
             text = self.glossary_input.toPlainText()
             if path.endswith('.json'):
@@ -308,14 +329,17 @@ class SubtitleVLMApp(QMainWindow):
 
     def start_process(self):
         self.save_settings()
-        video_files = [self.video_list_widget.item(i).text() for i in range(self.video_list_widget.count())]
-        if not video_files: return
+        video_files = [self.video_list_widget.item(i).text() for i in range(self.video_list_s_count())] if hasattr(self, 'video_list_s_count') else [self.video_list_widget.item(i).text() for i in range(self.video_list_widget.count())]
+        
+        if not video_files:
+            self.log_window.append("Please add video files to the list first.")
+            return
 
         self.start_btn.setEnabled(False)
         self.log_window.clear()
         
-        video_path = video_files[0]
-        self.worker = AnalysisWorker(video_path, self.settings)
+        # 전체 리스트를 워커에게 전달
+        self.worker = AnalysisWorker(video_files, self.settings)
         self.worker.progress.connect(self.update_progress)
         self.worker.log.connect(self.add_log)
         self.worker.finished.connect(self.process_finished)
@@ -330,52 +354,15 @@ class SubtitleVLMApp(QMainWindow):
     def add_log(self, message):
         self.log_window.append(message)
 
-    def process_finished(self, results):
+    def process_finished(self, count):
         self.start_btn.setEnabled(True)
-        self.status_label.setText("Analysis Complete!")
-        self.current_analysis = results
-        self.populate_edit_table()
-        self.export_btn.setEnabled(True)
-        self.tabs.setCurrentIndex(1)
+        self.status_label.setText(f"Ready. Processed {count} files.")
+        self.add_log(f"\n✅ Task completed. {count} files processed.")
 
-    def populate_edit_table(self):
-        self.edit_table.setRowCount(0)
-        for sub in self.current_analysis:
-            row = self.edit_table.rowCount()
-            self.edit_table.insertRow(row)
-            self.edit_table.setItem(row, 0, QTableWidgetItem(f"{sub['start']:.2f}"))
-            self.edit_table.setItem(row, 1, QTableWidgetItem(f"{sub['end']:.2f}"))
-            self.edit_table.setItem(row, 2, QTableWidgetItem(sub['text']))
-            self.edit_table.setItem(row, 3, QTableWidgetItem(sub.get('color', '#FFFFFF')))
-
-    def export_subtitles(self):
-        video_path = self.video_list_widget.item(0).text()
-        fmt = self.format_combo.currentText()
-        
-        final_subs = []
-        glossary = self.settings.get('glossary', {})
-        
-        for i in range(self.edit_table.rowCount()):
-            text = self.edit_table.item(i, 2).text()
-            for k, v in glossary.items():
-                text = text.replace(k, v)
-                
-            final_subs.append({
-                "start": float(self.edit_table.item(i, 0).text()),
-                "end": float(self.edit_table.item(i, 1).text()),
-                "text": text,
-                "color": self.edit_table.item(i, 3).text()
-            })
-        
-        exporter = SubtitleExporter()
-        if fmt == "SRT":
-            out_path = os.path.splitext(video_path)[0] + ".srt"
-            exporter.generate_srt(final_subs, out_path)
-        else:
-            out_path = os.path.splitext(video_path)[0] + ".ass"
-            exporter.generate_ass(final_subs, out_path)
-            
-        self.add_log(f"Exported to {out_path}")
+    def process_error(self, error_msg):
+        self.start_btn.setEnabled(True)
+        self.status_label.setText("Error")
+        self.add_log(f"\n❌ Critical Error: {error_msg}")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
