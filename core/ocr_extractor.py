@@ -7,9 +7,6 @@ import re
 class OCRExtractor:
     """
     PaddleOCR 기반 영상 자막 추출 클래스.
-    - 메모리 내 처리(디스크 저장 없음)
-    - 전체 화면에서 OCR 수행
-    - 고정 시간 간격 샘플링 + SequenceMatcher 기반 버퍼링/병합
     """
     def __init__(self, interval_sec: float = 0.3, similarity_threshold: float = 0.6,
                  conf_threshold: float = 0.4, log_callback: Optional[Callable] = None):
@@ -21,17 +18,12 @@ class OCRExtractor:
 
     def _init_ocr(self):
         import os
-        # Paddle/PaddleOCR의 C++ GLog stderr 출력 억제 (0=INFO, 1=WARNING, 2=ERROR, 3=FATAL)
         os.environ['GLOG_minloglevel'] = '2'
-        # paddleocr python logging도 억제
         import logging
         logging.getLogger('ppocr').setLevel(logging.WARNING)
         logging.getLogger('paddle').setLevel(logging.WARNING)
         from paddleocr import PaddleOCR
-        self.ocr = PaddleOCR(
-            use_angle_cls=True,
-            lang='japan',
-        )
+        self.ocr = PaddleOCR(use_angle_cls=True, lang='japan')
 
     def _log(self, msg: str):
         if self.log_callback:
@@ -49,30 +41,20 @@ class OCRExtractor:
             return True
         return False
 
-    def _safe_get_text_conf(self, line_item) -> Tuple[Optional[str], Optional[float]]:
-        """PaddleOCR 버전별 반환 형식 안전하게 파싱"""
+    def _safe_get_text_conf(self, line_item):
         try:
-            if not line_item or not isinstance(line_item, (list, tuple)):
+            if not line_item or not isinstance(line_item, (list, tuple)) or len(line_item) < 2:
                 return None, None
-            # 신버전: [[box, (text, conf)], ...]
-            # 구버전: [box, (text, conf)] 또는 [box, [text, conf]]
-            if len(line_item) < 2:
-                return None, None
-            
             text_conf = line_item[1]
             if isinstance(text_conf, (list, tuple)) and len(text_conf) >= 2:
-                text = str(text_conf[0])
-                conf = float(text_conf[1])
-                return text, conf
+                return str(text_conf[0]), float(text_conf[1])
             elif isinstance(text_conf, str):
                 return text_conf, 1.0
-            else:
-                return None, None
+            return None, None
         except (IndexError, TypeError, ValueError):
             return None, None
 
-    def _safe_get_box(self, line_item) -> Optional[list]:
-        """bounding box 안전하게 추출"""
+    def _safe_get_box(self, line_item):
         try:
             if not line_item or not isinstance(line_item, (list, tuple)) or len(line_item) < 1:
                 return None
@@ -83,66 +65,50 @@ class OCRExtractor:
         except (IndexError, TypeError):
             return None
 
-    def _normalize_ocr_result(self, ocr_res) -> list:
-        """PaddleOCR 여러 버전의 반환값을 표준 형식으로 변환"""
+    def _normalize_ocr_result(self, ocr_res):
         if ocr_res is None:
             return []
-        # ocr_res가 리스트가 아니면 리스트로
         if not isinstance(ocr_res, (list, tuple)):
             return []
-        # 빈 리스트
         if len(ocr_res) == 0:
             return []
-        # 구버전: [None] 또는 [[box, ...], ...]
-        # 신버전: [[[box, ...], ...], [...]]
         first = ocr_res[0]
         if first is None:
             return []
-        # first가 리스트이고, 그 안의 첫 요소도 리스트면 신버전 2차원
         if isinstance(first, (list, tuple)) and len(first) > 0:
             if isinstance(first[0], (list, tuple)):
-                return first  # 신버전: 첫 언어 결과만 사용
+                return first
             else:
-                return list(ocr_res)  # 구버전 1차원
+                return list(ocr_res)
         return list(ocr_res)
 
-    def _parse_ocr_result(self, ocr_res, frame_shape, frame_idx: int = 0) -> Tuple[str, str]:
-        """OCR 결과에서 원문과 대표 position을 반환"""
+    def _parse_ocr_result(self, ocr_res, frame_shape, frame_idx: int = 0):
         lines = self._normalize_ocr_result(ocr_res)
         h, w = frame_shape[:2]
 
-        # 원시 라인 정보 로깅
-        if frame_idx <= 5:
+        if frame_idx <= 10:
             raw_info = []
             for l in lines:
                 text, conf = self._safe_get_text_conf(l)
                 if text is not None:
                     raw_info.append(f"'{text}'({conf:.2f})")
-            self._log(f"  [OCR Debug frame {frame_idx}] raw lines: {raw_info}")
+            self._log(f"  [OCR Debug frame {frame_idx}] raw lines ({len(lines)}): {raw_info}")
 
-        # 유효 라인 필터링
         valid_lines = []
-        filtered_reasons = []
         for l in lines:
             text, conf = self._safe_get_text_conf(l)
-            if text is None:
-                filtered_reasons.append(f"parse_error: {l}")
+            if text is None or conf is None:
                 continue
             if conf < self.conf_threshold:
-                filtered_reasons.append(f"low_conf: '{text}'({conf:.2f})")
                 continue
             if self._is_junk_text(text):
-                filtered_reasons.append(f"junk: '{text}'")
                 continue
             valid_lines.append(l)
-
-        if frame_idx <= 5 and filtered_reasons:
-            self._log(f"  [OCR Debug frame {frame_idx}] filtered: {filtered_reasons}")
 
         if not valid_lines:
             return "", ""
 
-        # 세로쓰기 판단
+        is_vertical = False
         v_count = 0
         for l in valid_lines:
             box = self._safe_get_box(l)
@@ -157,7 +123,6 @@ class OCRExtractor:
                 continue
         is_vertical = v_count > (len(valid_lines) * 0.4)
 
-        # 정렬
         def sort_key(x):
             box = self._safe_get_box(x)
             if box is None:
@@ -171,10 +136,8 @@ class OCRExtractor:
                 return (0, 0)
 
         valid_lines.sort(key=sort_key)
-
         full_text = "".join([self._safe_get_text_conf(l)[0] or "" for l in valid_lines]).strip()
 
-        # Position 계산: 가장 아래쪽 라인의 중심
         lowest_line = None
         lowest_y = -1
         for l in valid_lines:
@@ -189,19 +152,18 @@ class OCRExtractor:
             except (IndexError, TypeError):
                 continue
 
+        position = "bottom-center"
         if lowest_line:
             box = self._safe_get_box(lowest_line)
             try:
                 cx = (box[0][0] + box[2][0]) / 2
                 cy = (box[0][1] + box[2][1]) / 2
-
                 if cy < h / 3:
                     v_pos = "top"
                 elif cy < 2 * h / 3:
                     v_pos = "middle"
                 else:
                     v_pos = "bottom"
-
                 if cx < w / 3:
                     h_pos = "left"
                 elif cx < 2 * w / 3:
@@ -210,14 +172,11 @@ class OCRExtractor:
                     h_pos = "right"
                 position = f"{v_pos}-{h_pos}"
             except (IndexError, TypeError):
-                position = "bottom-center"
-        else:
-            position = "bottom-center"
+                pass
 
         return full_text, position
 
     def extract(self, video_path: str, progress_callback=None) -> List[Dict]:
-        """영상에서 자막을 추출하여 [{start, end, original, position}, ...] 반환"""
         if self.ocr is None:
             self._init_ocr()
 
@@ -238,6 +197,8 @@ class OCRExtractor:
         total_raw_lines = 0
         total_valid_lines = 0
 
+        self._log(f"  [OCR] Starting: video={video_path}, fps={fps:.1f}, interval={self.interval_sec}s")
+
         while True:
             ret, frame = cap.read()
             if not ret:
@@ -249,6 +210,10 @@ class OCRExtractor:
                 last_timestamp = curr_t
                 if progress_callback:
                     progress_callback(frame_idx, total_frames)
+
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+                processed = clahe.apply(gray)
 
                 try:
                     ocr_res = self.ocr.ocr(processed)
@@ -292,7 +257,6 @@ class OCRExtractor:
                 "position": buffered_pos
             })
 
-        self._log(f"  [OCR Summary] total frames checked: {frame_idx // interval_frames}, "
-                  f"raw lines detected: {total_raw_lines}, valid text frames: {total_valid_lines}, "
-                  f"final segments: {len(results)}")
+        self._log(f"  [OCR Summary] frames: {frame_idx // interval_frames}, "
+                  f"raw lines: {total_raw_lines}, valid: {total_valid_lines}, final: {len(results)}")
         return results
