@@ -10,7 +10,6 @@ class VLMClient:
     def __init__(self, api_key: str, model_name: str, base_url: str):
         self.api_key = api_key
         self.model_name = model_name
-        # base_url이 /v1으로 끝나지 않는 경우 처리
         self.base_url = base_url.rstrip('/')
         if not self.base_url.endswith('/v1'):
             self.base_url += '/v1'
@@ -64,36 +63,6 @@ class VLMClient:
             "response_format": {"type": "json_object"},
             "temperature": 0.0
         }
-
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}"
-        }
-
-        try:
-            response = requests.post(f"{self.base_url}/chat/completions", headers=headers, json=payload, timeout=60)
-            response.raise_for_status()
-            result = response.json()
-            content = result['choices'][0]['message']['content']
-            return json.loads(content)
-        except Exception as e:
-            print(f"VLM Error ({image_path}): {e}")
-            return None
-
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}"
-        }
-
-        try:
-            response = requests.post(f"{self.base_url}/chat/completions", headers=headers, json=payload, timeout=60)
-            response.raise_for_status()
-            result = response.json()
-            content = result['choices'][0]['message']['content']
-            return json.loads(content)
-        except Exception as e:
-            print(f"VLM Error ({image_path}): {e}")
-            return None
 
         headers = {
             "Content-Type": "application/json",

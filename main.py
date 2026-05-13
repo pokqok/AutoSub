@@ -2,6 +2,7 @@ import sys
 import os
 import json
 import shutil
+import traceback
 from typing import List, Tuple, Dict
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
@@ -23,7 +24,8 @@ class AnalysisWorker(QThread):
     """
     progress = Signal(int, int, str) 
     log = Signal(str)
-    finished = Signal(int) # 최종 처리 완료된 파일 개수
+    # 처리 완료된 파일 개수(int) + 마지막 비디오의 분석 결과(List[Dict])
+    finished = Signal(int, List[Dict]) 
     error = Signal(str)
 
     def __init__(self, video_list, settings):
@@ -48,6 +50,7 @@ class AnalysisWorker(QThread):
             
             processed_count = 0
             total_videos = len(self.video_list)
+            last_results = [] # 마지막 비디오의 분석 결과를 저장
 
             for idx, video_path in enumerate(self.video_list):
                 self.log.emit(f"[{idx+1}/{total_videos}] Processing: {os.path.basename(video_path)}")
@@ -112,18 +115,18 @@ class AnalysisWorker(QThread):
                 # 임시 파일 정리
                 shutil.rmtree(temp_dir, ignore_errors=True)
                 processed_count += 1
+                last_results = refined_results # 마지막 결과 갱신
                 self.log.emit(f"Successfully saved SRT: {os.path.basename(srt_path)}")
 
-            self.finished.emit(processed_count)
+            self.finished.emit(processed_count, last_results)
 
         except Exception as e:
-            import traceback
             self.error.emit(f"Critical Error: {str(e)}\n{traceback.format_exc()}")
 
 class SubtitleVLMApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("AI Subtitle VLM Pro - Multi-Dialogue & Color Edition")
+        self.setWindowTitle("AI Subtitle VLM Pro - Bug Fixed Edition")
         self.setMinimumSize(1100, 700)
         self.setAcceptDrops(True)
         self.load_settings()
@@ -279,6 +282,14 @@ class SubtitleVLMApp(QMainWindow):
         path = QFileDialog.getExistingDirectory(self, "Select Folder")
         if path: self.add_path(path)
 
+    def remove_selected_file(self):
+        """선택된 항목을 큐에서 제거합니다."""
+        selected_items = self.video_list_widget.selectedItems()
+        if not selected_items:
+            return
+        for item in selected_items:
+            self.video_list_widget.takeItem(self.video_list_widget.row(item))
+
     def load_glossary_file(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open Glossary File", "", "Text Files (*.txt);;JSON Files (*.json)")
         if not path: return
@@ -338,7 +349,7 @@ class SubtitleVLMApp(QMainWindow):
 
     def start_process(self):
         self.save_settings()
-        video_files = [self.video_list_widget.item(i).text() for i in range(self.video_list_s_count())] if hasattr(self, 'video_list_s_count') else [self.video_list_widget.item(i).text() for i in range(self.video_list_widget.count())]
+        video_files = [self.video_list_widget.item(i).text() for i in range(self.video_list_widget.count())]
         
         if not video_files:
             self.log_window.append("Please add video files to the list first.")
@@ -347,7 +358,6 @@ class SubtitleVLMApp(QMainWindow):
         self.start_btn.setEnabled(False)
         self.log_window.clear()
         
-        # 전체 리스트를 워커에게 전달
         self.worker = AnalysisWorker(video_files, self.settings)
         self.worker.progress.connect(self.update_progress)
         self.worker.log.connect(self.add_log)
@@ -363,10 +373,64 @@ class SubtitleVLMApp(QMainWindow):
     def add_log(self, message):
         self.log_window.append(message)
 
-    def process_finished(self, count):
+    def process_finished(self, count, results):
+        """분석 완료 후 결과를 Review 탭에 채웁니다."""
         self.start_btn.setEnabled(True)
         self.status_label.setText(f"Ready. Processed {count} files.")
         self.add_log(f"\n✅ Task completed. {count} files processed.")
+        
+        # Review 탭에 결과 연결
+        self.current_analysis = results
+        self.populate_edit_table()
+        self.export_btn.setEnabled(True)
+        self.tabs.setCurrentIndex(1)
+
+    def populate_edit_table(self):
+        """현재 분석 결과를 Edit & Review 테이블에 표시합니다."""
+        self.edit_table.setRowCount(0)
+        if not self.current_analysis:
+            return
+        for sub in self.current_analysis:
+            row = self.edit_table.rowCount()
+            self.edit_table.insertRow(row)
+            self.edit_table.setItem(row, 0, QTableWidgetItem(f"{sub['start']:.2f}"))
+            self.edit_table.setItem(row, 1, QTableWidgetItem(f"{sub['end']:.2f}"))
+            self.edit_table.setItem(row, 2, QTableWidgetItem(sub['text']))
+            self.edit_table.setItem(row, 3, QTableWidgetItem(sub.get('color', '#FFFFFF')))
+
+    def export_subtitles(self):
+        """테이블에서 편집된 데이터를 읽어 자막 파일을보냅니다."""
+        if not self.video_list_widget.count():
+            return
+            
+        video_path = self.video_list_widget.item(0).text()
+        fmt = self.format_combo.currentText()
+        
+        final_subs = []
+        glossary = self.settings.get('glossary', {})
+        
+        for i in range(self.edit_table.rowCount()):
+            text = self.edit_table.item(i, 2).text()
+            # 후처리 단어집 기반 치환
+            for k, v in glossary.items():
+                text = text.replace(k, v)
+                
+            final_subs.append({
+                "start": float(self.edit_table.item(i, 0).text()),
+                "end": float(self.edit_table.item(i, 1).text()),
+                "text": text,
+                "color": self.edit_table.item(i, 3).text()
+            })
+        
+        exporter = SubtitleExporter()
+        if fmt == "SRT":
+            out_path = os.path.splitext(video_path)[0] + ".srt"
+            exporter.generate_srt(final_subs, out_path)
+        else:
+            out_path = os.path.splitext(video_path)[0] + ".ass"
+            exporter.generate_ass(final_subs, out_path)
+            
+        self.add_log(f"Exported to {out_path}")
 
     def process_error(self, error_msg):
         self.start_btn.setEnabled(True)

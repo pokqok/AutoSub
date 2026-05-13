@@ -22,7 +22,8 @@ class SubtitleExporter:
         hours = total_seconds // 3600
         minutes = (total_seconds % 3600) // 60
         secs = total_seconds % 60
-        cents = int((td.microseconds / 1000) * 10)
+        # centiseconds (0~99)
+        cents = int(td.microseconds / 10000)
         return f"{hours:01}:{minutes:02}:{secs:02}.{cents:02}"
 
     def generate_srt(self, subtitles: List[Dict], output_path: str):
@@ -65,4 +66,5 @@ class SubtitleExporter:
                 end = self.format_time_ass(sub['end'])
                 color_tag = rgb_to_ass_color(sub.get('color', '#FFFFFF'))
                 text = f"{{\\c{color_tag}}}{sub['text']}"
-                f.write(f"Dialogue: 0,{start},{end},Default,,0,0,0,effetto, {text}\n")
+                # Effect 필드는 비워두고 공백 없이 출력
+                f.write(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text}\n")
