@@ -53,7 +53,7 @@ class SubtitleSampler:
                 saved_frames.append((timestamp, filepath))
                 prev_edge_roi = edges
             
-            if progress_callback and frame_count % 100 == 0:
+            if progress_callback and frame_count % 30 == 0:
                 progress_callback(frame_count, total_frames)
 
         cap.release()

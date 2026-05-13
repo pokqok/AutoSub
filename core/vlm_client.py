@@ -52,9 +52,10 @@ class VLMClient:
 
         return None
 
-    def analyze_frame(self, image_path: str, custom_prompt: str = "") -> Optional[Dict[str, Any]]:
+    def analyze_frame(self, image_path: str, custom_prompt: str = "") -> Dict[str, Any]:
         """
         단일 프레임을 분석하여 모든 대사를 리스트 형태로 추출합니다.
+        오류 발생 시 Exception을 raise하여 호출자가 정확한 원인을 알 수 있게 합니다.
         """
         base64_image = self._encode_image(image_path)
         
@@ -81,7 +82,6 @@ class VLMClient:
                 }
             ],
             "temperature": 0.0
-            # Note: response_format 제거 — Ollama/Gemma 등에서 지원하지 않는 경우가 많음
         }
 
         headers = {
@@ -91,15 +91,23 @@ class VLMClient:
 
         try:
             response = requests.post(f"{self.base_url}/chat/completions", headers=headers, json=payload, timeout=60)
-            response.raise_for_status()
+            
+            # HTTP 오류 명시적 체크 (401, 404, 500 등)
+            if response.status_code != 200:
+                raise Exception(f"HTTP {response.status_code}: {response.text[:500]}")
+            
             result = response.json()
             raw_content = result['choices'][0]['message']['content']
             
             parsed = self._parse_json_response(raw_content)
             if parsed is None:
-                print(f"VLM Warning ({image_path}): Could not parse JSON from response: {raw_content[:200]}...")
-                return None
+                raise Exception(f"JSON parse failed. Raw response: {raw_content[:500]}")
+            
+            # 반드시 dict 형태이고 'dialogues' 키를 포함하는지 확인
+            if not isinstance(parsed, dict):
+                raise Exception(f"Response is not a JSON object. Got: {type(parsed).__name__}. Raw: {raw_content[:500]}")
+            
             return parsed
-        except Exception as e:
-            print(f"VLM Error ({image_path}): {e}")
-            return None
+        except (requests.RequestException, KeyError, json.JSONDecodeError) as e:
+            # 네트워크 오류, 응답 구조 오류 등
+            raise Exception(f"VLM Request/Parse Error: {str(e)}") from e

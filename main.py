@@ -67,9 +67,15 @@ class AnalysisWorker(QThread):
                     self.progress.emit(curr, total, f"Sampling frames for {os.path.basename(video_path)}...")
                 
                 sampled_frames = sampler.extract_frames(video_path, temp_dir, progress_callback=update_sampling_progress)
+                self.log.emit(f"  -> Extracted {len(sampled_frames)} frames to {temp_dir}")
+                
+                if not sampled_frames:
+                    self.error.emit(f"No frames extracted from {os.path.basename(video_path)}. "
+                                    f"The video might not have subtitle changes in the bottom {sampler.roi_bottom_percent}% region.")
+                    return
                 
                 # 2. VLM 분석 및 번역
-                self.log.emit(f"Analyzing {len(sampled_frames)} frames...")
+                self.log.emit(f"Analyzing {len(sampled_frames)} frames with model '{model_name}'...")
                 analysis_results = []
                 
                 glossary = self.settings.get('glossary', {})
@@ -77,13 +83,11 @@ class AnalysisWorker(QThread):
                 final_custom_prompt = f"{custom_prompt}\n\nGlossary Guidelines:\n{glossary_text}" if glossary_text else custom_prompt
 
                 for i, (ts, path) in enumerate(sampled_frames):
-                    self.progress.emit(i+1, len(sampled_frames), f"Analyzing frame {i+1}/{len(sampled_frames)}...")
-                    res = client.analyze_frame(path, custom_prompt=final_custom_prompt)
-                    
-                    if res is None:
-                        self.error.emit(f"VLM API Error on frame {i+1} of {os.path.basename(video_path)}. "
-                                        f"The model may not support vision or the API returned an invalid response. "
-                                        f"Check your model name, API key, and base URL.")
+                    self.progress.emit(i+1, len(sampled_frames), f"Sending frame {i+1}/{len(sampled_frames)} to VLM...")
+                    try:
+                        res = client.analyze_frame(path, custom_prompt=final_custom_prompt)
+                    except Exception as e:
+                        self.error.emit(f"VLM Error on frame {i+1} ({os.path.basename(path)}):\n{str(e)}")
                         shutil.rmtree(temp_dir, ignore_errors=True)
                         return
                     
@@ -96,6 +100,10 @@ class AnalysisWorker(QThread):
                                 "text": dlg.get('translated', ''),
                                 "color": dlg.get('color', '#FFFFFF')
                             })
+                
+                if not analysis_results:
+                    self.log.emit(f"  -> WARNING: No dialogues detected in any frame of {os.path.basename(video_path)}.")
+                    self.log.emit(f"     The VLM returned empty results. Check if the model supports vision/image input.")
                 
                 # 3. 타임라인 정제
                 refined_results = []
