@@ -68,6 +68,11 @@ class OCRExtractor:
     def _normalize_ocr_result(self, ocr_res):
         if ocr_res is None:
             return []
+        # 최신 PaddleX 기반 PaddleOCR: dict 형식
+        if isinstance(ocr_res, dict):
+            results = []
+            self._extract_text_items(ocr_res, results)
+            return results
         if not isinstance(ocr_res, (list, tuple)):
             return []
         if len(ocr_res) == 0:
@@ -75,12 +80,30 @@ class OCRExtractor:
         first = ocr_res[0]
         if first is None:
             return []
+        # 첫 요소가 딕셔너리면 최신 PaddleX 형식
+        if isinstance(first, dict):
+            results = []
+            self._extract_text_items(first, results)
+            return results
+        # 구버전: [[[box, (text, conf)], ...], [...]]
         if isinstance(first, (list, tuple)) and len(first) > 0:
             if isinstance(first[0], (list, tuple)):
                 return first
             else:
                 return list(ocr_res)
         return list(ocr_res)
+
+    def _extract_text_items(self, obj, results):
+        """딕셔너리 내부에서 text/score 키를 가진 항목을 재귀 탐색"""
+        if isinstance(obj, dict):
+            if 'text' in obj and ('score' in obj or 'confidence' in obj):
+                results.append(obj)
+                return
+            for v in obj.values():
+                self._extract_text_items(v, results)
+        elif isinstance(obj, (list, tuple)):
+            for item in obj:
+                self._extract_text_items(item, results)
 
     def _parse_ocr_result(self, ocr_res, frame_shape, frame_idx: int = 0):
         lines = self._normalize_ocr_result(ocr_res)
@@ -235,7 +258,7 @@ class OCRExtractor:
                     ocr_res = self.ocr.ocr(frame)
                     if first_frame_debug and ocr_res is not None:
                         # 첫 프레임의 OCR raw 결과 형식을 상세 로깅 (원인 파악용)
-                        sample = str(ocr_res)[:300]
+                        sample = str(ocr_res)[:1000]
                         self._log(f"  [OCR Sample frame {frame_idx}] type={type(ocr_res).__name__}, len={len(ocr_res) if isinstance(ocr_res, (list, tuple)) else 'N/A'}, content={sample}")
                         first_frame_debug = False
                 except Exception as e:
