@@ -55,7 +55,15 @@ class AnalysisWorker(QThread):
                                 f"Please fix your API Key, URL, or Model Name before starting analysis.")
                 return
 
-            extractor = OCRExtractor(interval_sec=ocr_interval)
+            # OCR 엔진 선택
+            ocr_engine = self.settings.get('ocr_engine', 'PaddleOCR')
+            self.log.emit(f"Initializing OCR engine: {ocr_engine}...")
+            if ocr_engine == "PaddleOCR-VL-1.5":
+                from core.paddle_vl_extractor import PaddleVLExtractor
+                extractor = PaddleVLExtractor(interval_sec=ocr_interval)
+            else:
+                from core.ocr_extractor import OCRExtractor
+                extractor = OCRExtractor(interval_sec=ocr_interval)
             exporter = SubtitleExporter()
 
             processed_count = 0
@@ -174,6 +182,22 @@ class SubtitleVLMApp(QMainWindow):
         self.output_format_combo.setCurrentText(self.settings.get('output_format', 'SRT'))
         fmt_layout.addWidget(self.output_format_combo)
         settings_group.addLayout(fmt_layout)
+
+        interval_layout = QHBoxLayout()
+        interval_layout.addWidget(QLabel("OCR Interval (sec):"))
+        self.interval_combo = QComboBox()
+        self.interval_combo.addItems(["0.3", "0.5", "1.0"])
+        self.interval_combo.setCurrentText(str(self.settings.get('ocr_interval', 0.3)))
+        interval_layout.addWidget(self.interval_combo)
+        settings_group.addLayout(interval_layout)
+
+        ocr_engine_layout = QHBoxLayout()
+        ocr_engine_layout.addWidget(QLabel("OCR Engine:"))
+        self.ocr_engine_combo = QComboBox()
+        self.ocr_engine_combo.addItems(["PaddleOCR", "PaddleOCR-VL-1.5"])
+        self.ocr_engine_combo.setCurrentText(self.settings.get('ocr_engine', 'PaddleOCR'))
+        ocr_engine_layout.addWidget(self.ocr_engine_combo)
+        settings_group.addLayout(ocr_engine_layout)
         
         left_panel.addLayout(settings_group)
         left_panel.addWidget(QLabel("----------------------------------"))
@@ -342,7 +366,9 @@ class SubtitleVLMApp(QMainWindow):
             "base_url": self.url_input.text(),
             "custom_prompt": self.prompt_input.toPlainText(),
             "glossary": glossary,
-            "output_format": self.output_format_combo.currentText()
+            "output_format": self.output_format_combo.currentText(),
+            "ocr_interval": float(self.interval_combo.currentText()),
+            "ocr_engine": self.ocr_engine_combo.currentText()
         }
         with open(CONFIG_FILE, "w") as f:
             json.dump(self.settings, f)

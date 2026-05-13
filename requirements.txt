@@ -2,6 +2,9 @@ opencv-python
 numpy
 requests
 PySide6
+pillow
+torch
+transformers
 paddleocr
 # NOTE: paddleocr also requires paddlepaddle or paddlepaddle-gpu.
 # Install the appropriate one for your environment:
