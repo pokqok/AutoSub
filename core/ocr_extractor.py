@@ -9,10 +9,12 @@ class OCRExtractor:
     PaddleOCR 기반 영상 자막 추출 클래스.
     """
     def __init__(self, interval_sec: float = 1.0, similarity_threshold: float = 0.6,
-                 conf_threshold: float = 0.4, log_callback: Optional[Callable] = None):
+                 conf_threshold: float = 0.4, use_clahe: bool = False,
+                 log_callback: Optional[Callable] = None):
         self.interval_sec = interval_sec
         self.similarity_threshold = similarity_threshold
         self.conf_threshold = conf_threshold
+        self.use_clahe = use_clahe
         self.log_callback = log_callback
         self.ocr = None
 
@@ -238,24 +240,27 @@ class OCRExtractor:
                 if progress_callback:
                     progress_callback(frame_idx, total_frames)
 
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-                processed = clahe.apply(gray)
+                # 전처리 선택: CLAHE (실험적, 기본 OFF) 또는 원본 BGR
+                if self.use_clahe:
+                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+                    processed = clahe.apply(gray)
+                    target_frame = cv2.cvtColor(processed, cv2.COLOR_GRAY2BGR)
+                else:
+                    target_frame = frame
 
                 # 4K 영상은 OCR 처리를 위해 리사이즈 (최대 1920 너비, 비율 유지)
-                h, w = processed.shape
+                h, w = target_frame.shape[:2]
                 max_w = 1920
                 if w > max_w:
                     scale = max_w / w
                     new_w = int(w * scale)
                     new_h = int(h * scale)
-                    processed = cv2.resize(processed, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                    target_frame = cv2.resize(target_frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-                # CLAHE 전처리 적용: grayscale -> BGR 변환 후 PaddleOCR에 전달
-                processed_bgr = cv2.cvtColor(processed, cv2.COLOR_GRAY2BGR)
                 try:
                     import traceback
-                    ocr_res = self.ocr.ocr(processed_bgr)
+                    ocr_res = self.ocr.ocr(target_frame)
                     if first_frame_debug and ocr_res is not None:
                         # 첫 프레임의 OCR raw 결과 형식을 상세 로깅 (원인 파악용)
                         sample = str(ocr_res)[:1000]
