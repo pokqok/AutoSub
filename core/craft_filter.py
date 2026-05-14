@@ -240,7 +240,7 @@ class CRAFTFrameFilter:
         """
         각 마커 기준 ±window_sec 범위를 step_sec 단위로 추가 샘플링합니다.
         Phase 3(SyncRefiner)에서 이진 탐색할 때 사용됩니다.
-        1초 프레임과 중복되지 않도록 seen_ts로 관리합니다.
+        순차 읽기(grab/retrieve)로 seek 비용을 최소화합니다.
         """
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
@@ -248,51 +248,83 @@ class CRAFTFrameFilter:
             return []
 
         fps = cap.get(cv2.CAP_PROP_FPS)
+        if fps <= 0:
+            cap.release()
+            return []
+
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        duration = total_frames / fps
         orig_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         orig_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        duration = total_frames / fps if fps > 0 else 0
 
-        dense_frames: List[Dict] = []
-        seen_ts = set()
-        count = 0
-
-        for m_idx, marker in enumerate(markers):
+        # 1. 모든 필요 timestamp 수집 + 가장 가까운 마커의 bbox 매핑
+        needed: Dict[float, Tuple] = {}  # timestamp -> bbox
+        for marker in markers:
             center = float(marker.get("timestamp", 0))
             bbox = marker.get("bbox")
-            start_t = max(0.0, center - window_sec)
+            t = max(0.0, center - window_sec)
             end_t = min(duration, center + window_sec)
+            while t <= end_t:
+                t_r = round(t, 1)
+                if t_r in needed:
+                    t += step_sec
+                    continue
+                needed[t_r] = bbox
+                t += step_sec
+
+        if not needed:
+            cap.release()
+            return []
+
+        # 시간 오름차순으로 정렬된 프레임 목록
+        sorted_items = sorted(needed.items(), key=lambda x: x[0])  # [(timestamp, bbox), ...]
+        n_needed = len(sorted_items)
+
+        self._log(f"  [Dense] Total needed frames: {n_needed}")
+
+        dense_frames: List[Dict] = []
+        count = 0
+        current_frame_idx = 0
+        next_idx = 0
+
+        while next_idx < n_needed and current_frame_idx < total_frames:
+            target_t, target_bbox = sorted_items[next_idx]
+            target_frame_idx = int(target_t * fps)
+
+            # grab()으로 필요한 프레임까지 빠르게 건너뛰기 (디코딩 없이)
+            while current_frame_idx < target_frame_idx:
+                if not cap.grab():
+                    break
+                current_frame_idx += 1
+
+            if current_frame_idx >= total_frames:
+                break
+
+            # retrieve()로 실제 디코딩 (필요한 프레임만)
+            ret, frame = cap.retrieve()
+            current_frame_idx += 1
+
+            if not ret or frame is None:
+                next_idx += 1
+                continue
+
+            # 풀 프레임 저장
+            filepath = os.path.join(output_folder, f"dense_{int(target_t * 1000):08d}.jpg")
+            cv2.imwrite(filepath, frame, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+
+            dense_frames.append({
+                "timestamp": target_t,
+                "filepath": filepath,
+                "bbox": target_bbox,
+                "orig_w": orig_w,
+                "orig_h": orig_h
+            })
+            count += 1
 
             if progress_callback:
-                progress_callback(m_idx + 1, len(markers))
+                progress_callback(count, n_needed)
 
-            t = start_t
-            while t <= end_t:
-                t_rounded = round(t, 1)
-                if t_rounded in seen_ts:
-                    t += step_sec
-                    continue
-                seen_ts.add(t_rounded)
-
-                cap.set(cv2.CAP_PROP_POS_MSEC, int(t * 1000))
-                ret, frame = cap.read()
-                if not ret:
-                    t += step_sec
-                    continue
-
-                # 풀 프레임 저장 (Phase 3에서 다시 ROI 크롭할 수 있도록)
-                filepath = os.path.join(output_folder, f"dense_{int(t * 1000):08d}.jpg")
-                cv2.imwrite(filepath, frame, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
-
-                dense_frames.append({
-                    "timestamp": t,
-                    "filepath": filepath,
-                    "bbox": bbox,
-                    "orig_w": orig_w,
-                    "orig_h": orig_h
-                })
-                count += 1
-                t += step_sec
+            next_idx += 1
 
         cap.release()
         self._log(f"  [Dense] Extracted {count} dense frames ({window_sec}s window, {step_sec}s step)")
