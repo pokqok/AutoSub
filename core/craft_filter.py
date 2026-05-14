@@ -3,10 +3,12 @@ import numpy as np
 import os
 from typing import List, Dict, Tuple, Callable, Optional
 
-# ── 모델 캐시를 E드라이브로 설정 (C드라이브 공간 부족 대비) ──
+# ── 모델 캐시를 프로젝트 폴더 내 models/에 저장 (C드라이브 공간 부족 대비) ──
 import torch
-# 필요하면 아래 경로를 원하는 E드라이브 폴더로 수정하세요
-torch.hub.set_dir(r"E:\torch_cache")
+_project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_torch_cache = os.path.join(_project_root, "models")
+os.makedirs(_torch_cache, exist_ok=True)
+torch.hub.set_dir(_torch_cache)
 
 # ── torchvision >= 0.13 호환 패치 ──
 # craft-text-detector가 구버전 torchvision의 model_urls를 기대하지만
