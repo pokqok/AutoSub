@@ -56,10 +56,12 @@ class SyncRefiner:
                            center_sec: float,
                            direction: str,
                            position=None,
-                           bbox=None):
+                           bbox=None,
+                           forced_end_t: float = None):
         """
         center_sec 주변에서 ROI diff가 가장 큰 지점을 찾습니다.
         direction: forward=end 보정(텍스트 사라짐 지점), backward=start 보정(텍스트 등장 지점)
+        forced_end_t: forward 방향에서 검색 끝 경계를 외부에서 지정 (다음 자막 시작 전)
         """
         frame_shape = (
             int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
@@ -68,15 +70,17 @@ class SyncRefiner:
         coords = self._get_roi_coords(frame_shape, position, bbox)
 
         # 탐색 범위
-        half_radius = self.scan_radius_sec / 2
         if direction == "backward":
             start_t = max(0.0, center_sec - self.scan_radius_sec)
-            end_t = center_sec + half_radius
+            end_t = center_sec + self.scan_radius_sec / 2
         else:  # forward
-            start_t = max(0.0, center_sec - half_radius)
-            end_t = center_sec + self.scan_radius_sec
+            start_t = center_sec
+            if forced_end_t is not None:
+                end_t = forced_end_t
+            else:
+                end_t = center_sec + self.scan_radius_sec
 
-        # 0.05초 간격으로 프레임 추출
+        # 0.1초 간격으로 프레임 추출
         scan_times = np.arange(start_t, end_t, self.scan_interval_sec)
         if len(scan_times) < 2:
             return center_sec
@@ -98,7 +102,6 @@ class SyncRefiner:
         # diff 계산: 연속된 프레임들의 차이
         diffs = []
         for i in range(len(frames_gray) - 1):
-            # resize to same size if needed
             if frames_gray[i].shape != frames_gray[i+1].shape:
                 h, w = frames_gray[i].shape
                 next_resized = cv2.resize(frames_gray[i+1], (w, h))
@@ -113,14 +116,16 @@ class SyncRefiner:
 
         max_diff = max(diffs)
         if max_diff < self.diff_threshold:
-            # 의미 있는 변화가 없음: 보정 불필요
+            # 의미 있는 변화가 없음: 자막이 검색 구간 끝까지 남아있음
+            # → 구간 끝에서 사라진 것으로 처리
+            if direction == "forward" and valid_times:
+                return valid_times[-1]
             return center_sec
 
         max_idx = int(np.argmax(diffs))
 
         if direction == "backward":
-            # 텍스트 등장: diff가 spike되기 직전이 start
-            # spike 지점의 다음 프레임 시간이 텍스트가 나타난 시점
+            # 텍스트 등장: diff spike 직후 시점
             refined_t = valid_times[min(max_idx + 1, len(valid_times) - 1)]
         else:
             # 텍스트 사라짐: diff spike 지점이 end
@@ -130,7 +135,7 @@ class SyncRefiner:
 
     def refine(self, video_path: str, subtitles: List[Dict]) -> List[Dict]:
         """
-        subtitles: LLM 결과
+        subtitles: VLM 결과
         반환: 동일 구조, start/end만 정밀 보정
         """
         cap = cv2.VideoCapture(video_path)
@@ -145,19 +150,32 @@ class SyncRefiner:
             original_end = sub["end"]
             bbox = sub.get("bbox")
 
-            # start 보정
+            # 다음 자막 시작 시점 (없으면 무한대)
+            next_start = subtitles[i + 1]["start"] if i + 1 < len(subtitles) else float('inf')
+
+            # start 보정: 등장 지점 탐색
             refined_start = self._find_change_point(
                 cap, fps, original_start, "backward", position, bbox
             )
 
-            # end 보정
+            # end 보정: 사라짐 지점 탐색
+            # 최소 0.3초는 표시, 다음 자막 0.1초 전까지만 검색
+            search_limit = min(next_start - 0.1, original_start + 5.0)
+            if search_limit <= original_start + 0.3:
+                search_limit = original_start + 0.3
+
             refined_end = self._find_change_point(
-                cap, fps, original_end, "forward", position, bbox
+                cap, fps, original_start + 0.3, "forward", position, bbox,
+                forced_end_t=search_limit
             )
 
-            # 안전 검사: end < start 방지
-            if refined_end < refined_start:
-                refined_end = refined_start + 1.0
+            # 다음 자막과 겹치지 않도록 clamp
+            if refined_end > next_start - 0.05:
+                refined_end = next_start - 0.05
+
+            # 안전 검사
+            if refined_end <= refined_start:
+                refined_end = refined_start + 0.5
 
             refined.append({
                 **sub,
