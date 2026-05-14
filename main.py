@@ -243,8 +243,8 @@ class SubtitleVLMApp(QMainWindow):
         interval_layout = QHBoxLayout()
         interval_layout.addWidget(QLabel("OCR Interval (sec):"))
         self.interval_combo = QComboBox()
-        self.interval_combo.addItems(["0.3", "0.5", "1.0"])
-        self.interval_combo.setCurrentText(str(self.settings.get('ocr_interval', 0.3)))
+        self.interval_combo.addItems(["1.0"])
+        self.interval_combo.setCurrentText(str(self.settings.get('ocr_interval', 1.0)))
         interval_layout.addWidget(self.interval_combo)
         settings_group.addLayout(interval_layout)
 
