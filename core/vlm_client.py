@@ -21,48 +21,53 @@ class VLMClient:
 
     def _parse_json_response(self, raw_text: str) -> Any:
         """JSON 응답 파싱. 마크다운, 중괄호/대괄호 추출. 잘린 JSON도 복구."""
-        if not raw_text:
+        if not raw_text or not raw_text.strip():
             return None
+
+        # 0. 마크다운 code block 추출 (첫 번째 code block 사용)
         code_block_pattern = r'```(?:json)?\s*([\s\S]*?)\s*```'
         matches = re.findall(code_block_pattern, raw_text)
         if matches:
-            raw_text = matches[-1].strip()
-        raw_text = raw_text.strip()
+            raw_text = matches[0].strip()
+        else:
+            raw_text = raw_text.strip()
 
-        # 1. 전체 그대로 파싱 시도
-        try:
-            return json.loads(raw_text)
-        except json.JSONDecodeError:
-            pass
-
-        # 2. JSON array([...])를 먼저 찾아 시도
-        array_pattern = r'(\[[\s\S]*\])'
-        array_matches = re.findall(array_pattern, raw_text)
-        if array_matches:
+        # 1. raw_text가 [로 시작하면 list로 강제 파싱 시도
+        if raw_text.startswith('['):
             try:
-                return json.loads(array_matches[-1])
+                return json.loads(raw_text)
             except json.JSONDecodeError:
+                # trailing 쉼표 제거 후 재시도
+                cleaned = re.sub(r',\s*\]', ']', raw_text)
+                try:
+                    return json.loads(cleaned)
+                except:
+                    pass
+
+        # 2. raw_text가 {로 시작하면 dict로 파싱
+        if raw_text.startswith('{'):
+            try:
+                return json.loads(raw_text)
+            except:
                 pass
 
-        # 3. JSON object({...})를 찾아 시도
-        obj_pattern = r'(\{[\s\S]*\})'
-        obj_matches = re.findall(obj_pattern, raw_text)
-        if obj_matches:
+        # 3. array pattern (fallback)
+        array_match = re.search(r'(\[[\s\S]*?\])', raw_text)
+        if array_match:
             try:
-                return json.loads(obj_matches[-1])
-            except json.JSONDecodeError:
+                return json.loads(array_match.group(1))
+            except:
                 pass
 
-        # 4. 잘린 JSON 복구: 닫히지 않은 마지막 객체는 버리고, 완성된 객체만 추출
-        # 배열 내부에서 마지막 완성된 객체까지 찾기
-        truncated_match = re.search(r'(\[.*?\{.*?\}\s*\])(?!\s*\{)', raw_text, re.DOTALL)
-        if truncated_match:
+        # 4. object pattern (fallback)
+        obj_match = re.search(r'(\{[\s\S]*?\})', raw_text)
+        if obj_match:
             try:
-                return json.loads(truncated_match.group(1) + ']')
-            except json.JSONDecodeError:
+                return json.loads(obj_match.group(1))
+            except:
                 pass
 
-        # 5. 마지막 시도: 모든 객체 패턴을 찾아서 하나씩 파싱
+        # 5. frame_index 패턴 매칭 (마지막 수단: 완성된 객체들만 개별 추출)
         objects = []
         for obj_str in re.finditer(r'\{[^{}]*"frame_index"[^{}]*\}', raw_text):
             try:
@@ -249,6 +254,16 @@ class VLMClient:
                 parsed = self._parse_json_response(raw_content)
                 if parsed is None:
                     last_error = f"JSON parse failed (attempt {attempt+1}/5). First 500 chars: {raw_content[:500]}"
+                    print(f"[VLMClient] {last_error}")
+                    if attempt < 4:
+                        wait = min(3 * (2 ** attempt), 96)
+                        print(f"[VLMClient] Retrying in {wait}s...")
+                        time.sleep(wait)
+                    continue
+
+                # list가 아니면 retry (Unexpected format 포함)
+                if not isinstance(parsed, list):
+                    last_error = f"Unexpected format. Got: {type(parsed).__name__}. Raw: {raw_content[:500]}"
                     print(f"[VLMClient] {last_error}")
                     if attempt < 4:
                         wait = min(3 * (2 ** attempt), 96)
