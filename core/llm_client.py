@@ -65,7 +65,8 @@ class LLMClient:
         except Exception as e:
             raise Exception(f"API Connection Test Failed: {str(e)}") from e
 
-    def translate_and_refine(self, ocr_results: List[Dict], custom_prompt: str = "") -> List[Dict]:
+    def _translate_chunk(self, chunk: List[Dict], custom_prompt: str = "") -> List[Dict]:
+        """단일 청크에 대해 LLM 번역/정제를 수행합니다."""
         system_prompt = (
             "당신은 일본어 애니메이션 및 영상의 전문 자막 번역가 겸 편집자입니다.\n"
             "아래 JSON 목록은 OCR 엔진이 비디오에서 대략적으로 추출한 일본어 대사와 시간대, 위치 정보입니다.\n"
@@ -81,7 +82,7 @@ class LLMClient:
         if custom_prompt:
             system_prompt += f"\n\n사용자 추가 지시사항:\n{custom_prompt}"
 
-        user_content = json.dumps(ocr_results, ensure_ascii=False, indent=2)
+        user_content = json.dumps(chunk, ensure_ascii=False, indent=2)
 
         payload = {
             "model": self.model_name,
@@ -90,7 +91,7 @@ class LLMClient:
                 {"role": "user", "content": user_content}
             ],
             "temperature": 0.0,
-            "max_tokens": 4000
+            "max_tokens": 8000
         }
         headers = {
             "Content-Type": "application/json",
@@ -115,3 +116,19 @@ class LLMClient:
             return parsed
         except Exception as e:
             raise Exception(f"LLM Processing Error: {str(e)}") from e
+
+    def translate_and_refine(self, ocr_results: List[Dict], custom_prompt: str = "") -> List[Dict]:
+        """OCR 결과를 청크 단위로 분할하여 번역/정제하고 병합합니다."""
+        if not ocr_results:
+            return []
+
+        CHUNK_SIZE = 50
+        total = len(ocr_results)
+        all_results: List[Dict] = []
+
+        for i in range(0, total, CHUNK_SIZE):
+            chunk = ocr_results[i:i + CHUNK_SIZE]
+            chunk_result = self._translate_chunk(chunk, custom_prompt=custom_prompt)
+            all_results.extend(chunk_result)
+
+        return all_results

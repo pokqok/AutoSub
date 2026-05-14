@@ -125,6 +125,16 @@ class AnalysisWorker(QThread):
                     self.log.emit(f"  -> WARNING: LLM returned empty result for {os.path.basename(video_path)}.")
                     continue
 
+                # Phase 3: 세부 싱크 보정
+                self.log.emit(f"  Phase 3/3: Fine-tuning subtitle sync (0.05s precision)...")
+                try:
+                    from core.sync_refiner import SyncRefiner
+                    refiner = SyncRefiner()
+                    final_results = refiner.refine(video_path, final_results)
+                    self.log.emit(f"  -> Sync refinement complete.")
+                except Exception as e:
+                    self.log.emit(f"  -> WARNING: Sync refinement failed, using LLM timing: {str(e)}")
+
                 # Save
                 if self.output_format == "SRT":
                     exporter.generate_srt(final_results, subtitle_path)
@@ -298,8 +308,8 @@ class SubtitleVLMApp(QMainWindow):
         self.review_tab = QWidget()
         review_layout = QVBoxLayout(self.review_tab)
         self.edit_table = QTableWidget(0, 5) 
-        self.edit_table.setHorizontalHeaderLabels(["Start", "End", "Text", "Color(HEX)"])
-        self.edit_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.edit_table.setHorizontalHeaderLabels(["Start", "End", "Original", "Translated", "Position"])
+        self.edit_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         review_layout.addWidget(self.edit_table)
         
         export_layout = QHBoxLayout()
