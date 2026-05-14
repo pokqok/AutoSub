@@ -125,7 +125,7 @@ class SubtitleFrameFilter:
                         frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
                     try:
-                        ocr_res = self.ocr.ocr(frame, cls=False)
+                        ocr_res = self.ocr.ocr(frame)
                         box_count = self._normalize_det_result(ocr_res)
                     except Exception as e:
                         self._log(f"  [Filter Error frame {frame_idx}] {str(e)}")
