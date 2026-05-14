@@ -114,8 +114,7 @@ class VLMClient:
             return all_subtitles
 
         # JSON 문자열로 직렬화 (길이 제한: 최근 80개)
-        review_target = all_subtitles[-80:] if len(all_subtitles) > 80 else all_subtitles
-        subs_json = json.dumps(review_target, ensure_ascii=False, indent=1)
+        subs_json = json.dumps(all_subtitles, ensure_ascii=False, indent=1)
 
         prompt_lines = [
             "You are a senior subtitle QC (Quality Control) editor.",
