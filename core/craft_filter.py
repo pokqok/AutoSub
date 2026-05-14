@@ -223,3 +223,79 @@ class CRAFTFrameFilter:
                   f"duplicates removed: {dup_count}, "
                   f"final: {len(saved_frames)}")
         return saved_frames
+
+    def extract_dense_frames(self, video_path: str, markers: List[Dict],
+                             output_folder: str,
+                             window_sec: float = 2.5,
+                             step_sec: float = 0.1) -> List[Dict]:
+        """
+        각 마커 기준 ±window_sec 범위를 step_sec 단위로 추가 샘플링합니다.
+        Phase 3(SyncRefiner)에서 이진 탐색할 때 사용됩니다.
+        1초 프레임과 중복되지 않도록 seen_ts로 관리합니다.
+        """
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            self._log(f"  [Dense] Could not open video: {video_path}")
+            return []
+
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        orig_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        orig_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        duration = total_frames / fps if fps > 0 else 0
+
+        dense_frames: List[Dict] = []
+        seen_ts = set()
+        count = 0
+
+        for marker in markers:
+            center = float(marker.get("timestamp", 0))
+            bbox = marker.get("bbox")
+            start_t = max(0.0, center - window_sec)
+            end_t = min(duration, center + window_sec)
+
+            t = start_t
+            while t <= end_t:
+                t_rounded = round(t, 1)
+                if t_rounded in seen_ts:
+                    t += step_sec
+                    continue
+                seen_ts.add(t_rounded)
+
+                cap.set(cv2.CAP_PROP_POS_MSEC, int(t * 1000))
+                ret, frame = cap.read()
+                if not ret:
+                    t += step_sec
+                    continue
+
+                # ROI crop (marker의 bbox 사용)
+                if bbox:
+                    x1, y1, x2, y2 = bbox
+                    x1 = max(0, int(x1))
+                    y1 = max(0, int(y1))
+                    x2 = min(orig_w, int(x2))
+                    y2 = min(orig_h, int(y2))
+                    if x2 <= x1 or y2 <= y1:
+                        t += step_sec
+                        continue
+                    roi_frame = frame[y1:y2, x1:x2]
+                else:
+                    roi_frame = frame
+
+                ts_ms = int(t * 1000)
+                filepath = os.path.join(output_folder, f"dense_{ts_ms:08d}.jpg")
+                cv2.imwrite(filepath, roi_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+
+                dense_frames.append({
+                    "timestamp": t,
+                    "filepath": filepath,
+                    "bbox": bbox,
+                    "orig_w": orig_w,
+                    "orig_h": orig_h
+                })
+                count += 1
+                t += step_sec
+
+        cap.release()
+        self._log(f"  [Dense] Extracted {count} dense frames ({window_sec}s window, {step_sec}s step)")
+        return dense_frames

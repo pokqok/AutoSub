@@ -93,6 +93,16 @@ class AnalysisWorker(QThread):
                         self.log.emit(f"  -> WARNING: No subtitle frames detected in {os.path.basename(video_path)}.")
                         continue
 
+                    # Dense frames for Phase 3 sync refinement
+                    self.log.emit("  -> Extracting dense frames (±2.5s @ 0.1s) for sync refinement...")
+                    dense_frames = frame_filter.extract_dense_frames(
+                        video_path, subtitle_frames, temp_dir
+                    )
+                    self.log.emit(f"  -> Dense frames: {len(dense_frames)}")
+                    # 1초 프레임 + dense 프레임을 합쳐서 SyncRefiner에 전달
+                    all_frames_for_sync = subtitle_frames + dense_frames
+                    all_frames_for_sync.sort(key=lambda x: x["timestamp"])
+
                     # Phase 2: VLM 배치 분석
                     self.progress.emit(35, 100, f"Phase 2/3: VLM analysis...")
                     self.log.emit(f"  Phase 2/3: VLM batch analysis with '{model_name}'...")
@@ -133,7 +143,7 @@ class AnalysisWorker(QThread):
                     self.log.emit("  Phase 3/3: Fine-tuning subtitle sync (0.1s precision)...")
                     try:
                         refiner = SyncRefiner()
-                        final_results = refiner.refine(video_path, all_results, subtitle_frames)
+                        final_results = refiner.refine(video_path, all_results, all_frames_for_sync)
                         self.log.emit("  -> Sync refinement complete.")
                     except Exception as e:
                         self.log.emit(f"  -> WARNING: Sync refinement failed, using VLM timing: {str(e)}")
