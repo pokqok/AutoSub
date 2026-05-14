@@ -53,7 +53,10 @@ class SyncRefiner:
 
     @staticmethod
     def _roi_similarity(roi1, roi2) -> float:
-        """두 ROI의 히스토그램 상관관수를 반환 (0~1)"""
+        """
+        두 ROI의 유사도를 반환 (0~1). 배경 색 변화에 강건하도록
+        엣지(Edge) 형태 + 구조적 유사도(NCC)를 결합합니다.
+        """
         if roi1 is None or roi2 is None or roi1.size == 0 or roi2.size == 0:
             return 0.0
         try:
@@ -61,11 +64,31 @@ class SyncRefiner:
             r2 = cv2.resize(roi2, (64, 64))
             g1 = cv2.cvtColor(r1, cv2.COLOR_BGR2GRAY)
             g2 = cv2.cvtColor(r2, cv2.COLOR_BGR2GRAY)
-            h1 = cv2.calcHist([g1], [0], None, [64], [0, 256])
-            h2 = cv2.calcHist([g2], [0], None, [64], [0, 256])
-            cv2.normalize(h1, h1)
-            cv2.normalize(h2, h2)
-            return cv2.compareHist(h1, h2, cv2.HISTCMP_CORREL)
+
+            # --- 1. 엣지(Edge) 유사도: 텍스트 형태 기반, 배경 색 무관 ---
+            e1 = cv2.Canny(g1, 50, 150)
+            e2 = cv2.Canny(g2, 50, 150)
+            edge_count1 = np.count_nonzero(e1)
+            edge_count2 = np.count_nonzero(e2)
+
+            # 엣지가 너무 적으면(=자막 거의 없음) edge 신뢰도 낮음
+            if edge_count1 < 30 or edge_count2 < 30:
+                edge_sim = 0.0
+            else:
+                intersection = np.count_nonzero(np.logical_and(e1, e2))
+                union = np.count_nonzero(np.logical_or(e1, e2))
+                edge_sim = intersection / union if union > 0 else 0.0
+
+            # --- 2. 구조적 유사도 (NCC): 전체 형태, 밝기/색상 무관 ---
+            g1f = g1.astype(np.float32).flatten()
+            g2f = g2.astype(np.float32).flatten()
+            g1n = (g1f - g1f.mean()) / (g1f.std() + 1e-8)
+            g2n = (g2f - g2f.mean()) / (g2f.std() + 1e-8)
+            ncc = float(np.dot(g1n, g2n) / len(g1n))
+            ncc = (np.clip(ncc, -1.0, 1.0) + 1.0) / 2.0  # -1..1 → 0..1
+
+            # 최종: 엣지 형태를 우선(60%), 구조적 유사도 보조(40%)
+            return 0.6 * edge_sim + 0.4 * ncc
         except Exception:
             return 0.0
 
