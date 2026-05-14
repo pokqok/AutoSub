@@ -46,7 +46,7 @@ class CRAFTFrameFilter:
         self.craft = Craft(
             output_dir=None,       # 파일 저장 안 함
             crop_type="poly",
-            cuda=False,             # GPU 없으면 False
+            cuda=True,             # RTX 3050 GPU 사용
             text_threshold=self.text_threshold,
             link_threshold=self.link_threshold,
             low_text=self.low_text
@@ -61,8 +61,10 @@ class CRAFTFrameFilter:
         프레임에서 텍스트 영역이 있는지 감지.
         반환: (has_text: bool, bbox: (x1, y1, x2, y2) or None)
         """
+        # GPU 처리용으로 640x360으로 리사이즈
+        small = cv2.resize(frame, (640, 360))
         # BGR → RGB
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
 
         prediction_result = self.craft.detect_text(rgb)
         boxes = prediction_result.get("boxes")
