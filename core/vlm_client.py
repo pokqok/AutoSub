@@ -1,12 +1,15 @@
-import requests
-import json
 import base64
+import json
 import re
-from typing import Optional, Dict, Any
+import requests
+import os
+from typing import List, Dict, Tuple, Any
+
 
 class VLMClient:
     """
-    Ollama Cloud 및 OpenAI 호환 API를 통한 VLM 분석 클래스
+    OpenAI 호환 멀티이미지 VLM 클라이언트.
+    자막 프레임 배치를 전송하여 번역/색상/위치를 추출.
     """
     def __init__(self, api_key: str, model_name: str, base_url: str):
         self.api_key = api_key
@@ -15,33 +18,19 @@ class VLMClient:
         if not self.base_url.endswith('/v1'):
             self.base_url += '/v1'
 
-    def _encode_image(self, image_path: str) -> str:
-        with open(image_path, "rb") as image_file:
-            return base64.b64encode(image_file.read()).decode('utf-8')
-
-    def _parse_json_response(self, raw_text: str) -> Optional[Dict[str, Any]]:
-        """
-        모델이 반환한 다양한 형태(순수 JSON, 마크다운 코드블록 등)를 파싱합니다.
-        """
+    def _parse_json_response(self, raw_text: str) -> Any:
+        """JSON 응답 파싱 (마크다운 코드블록, 중괄호 추출 등)"""
         if not raw_text:
             return None
-
-        # 1. 마크다운 코드블록 내부의 JSON 추출 시도
         code_block_pattern = r'```(?:json)?\s*([\s\S]*?)\s*```'
         matches = re.findall(code_block_pattern, raw_text)
         if matches:
-            # 여러 블록이 있으면 마지막 블록을 사용 (보통 결론이 마지막에 나옴)
             raw_text = matches[-1].strip()
-
         raw_text = raw_text.strip()
-
-        # 2. JSON 파싱 시도
         try:
             return json.loads(raw_text)
         except json.JSONDecodeError:
             pass
-
-        # 3. 중괄호로 감싸진 부분만 찾아서 파싱 시도 (모델이 앞뒤로 설명을 덧붙인 경우)
         json_pattern = r'(\{[\s\S]*\})'
         json_matches = re.findall(json_pattern, raw_text)
         if json_matches:
@@ -49,74 +38,13 @@ class VLMClient:
                 return json.loads(json_matches[-1])
             except json.JSONDecodeError:
                 pass
-
+        try:
+            return json.loads(raw_text)
+        except json.JSONDecodeError:
+            pass
         return None
 
-    def analyze_frame(self, image_path: str, custom_prompt: str = "") -> Dict[str, Any]:
-        """
-        단일 프레임을 분석하여 모든 대사를 리스트 형태로 추출합니다.
-        오류 발생 시 Exception을 raise하여 호출자가 정확한 원인을 알 수 있게 합니다.
-        """
-        base64_image = self._encode_image(image_path)
-        
-        core_instruction = (
-            "Analyze this Japanese video frame. Identify ALL text that are character's spoken dialogues. "
-            "Differentiate them from background text, logos, UI, or sound effects. "
-            "You must respond ONLY with a valid JSON object. Do not include markdown formatting, explanations, or any other text. "
-            "If no dialogue is found, return exactly: {\"dialogues\": []} "
-            "If dialogue is found, return exactly in this format:\n"
-            "{\"dialogues\": [{\"original\": \"...\", \"translated\": \"...\", \"color\": \"#RRGGBB\", \"position\": \"...\"}]}"
-        )
-
-        full_prompt = f"{custom_prompt}\n\n{core_instruction}" if custom_prompt else core_instruction
-
-        payload = {
-            "model": self.model_name,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": full_prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-                    ]
-                }
-            ],
-            "temperature": 0.0
-        }
-
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}"
-        }
-
-        try:
-            response = requests.post(f"{self.base_url}/chat/completions", headers=headers, json=payload, timeout=60)
-            
-            # HTTP 오류 명시적 체크 (401, 404, 500 등)
-            if response.status_code != 200:
-                raise Exception(f"HTTP {response.status_code}: {response.text[:500]}")
-            
-            result = response.json()
-            raw_content = result['choices'][0]['message']['content']
-            
-            parsed = self._parse_json_response(raw_content)
-            if parsed is None:
-                raise Exception(f"JSON parse failed. Raw response: {raw_content[:500]}")
-            
-            # 반드시 dict 형태이고 'dialogues' 키를 포함하는지 확인
-            if not isinstance(parsed, dict):
-                raise Exception(f"Response is not a JSON object. Got: {type(parsed).__name__}. Raw: {raw_content[:500]}")
-            
-            return parsed
-        except (requests.RequestException, KeyError, json.JSONDecodeError) as e:
-            # 네트워크 오류, 응답 구조 오류 등
-            raise Exception(f"VLM Request/Parse Error: {str(e)}") from e
-
     def test_connection(self) -> str:
-        """
-        API 연결 상태를 text-only 메시지로 빠르게 확인합니다.
-        성공하면 응답 텍스트를, 실패하면 Exception을 raise합니다.
-        """
         payload = {
             "model": self.model_name,
             "messages": [
@@ -129,18 +57,133 @@ class VLMClient:
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}"
         }
-
         try:
             response = requests.post(
                 f"{self.base_url}/chat/completions",
-                headers=headers,
-                json=payload,
-                timeout=30
+                headers=headers, json=payload, timeout=30
             )
             if response.status_code != 200:
                 raise Exception(f"HTTP {response.status_code}: {response.text[:500]}")
             result = response.json()
-            content = result['choices'][0]['message']['content']
-            return content.strip()
-        except (requests.RequestException, KeyError, json.JSONDecodeError) as e:
+            return result['choices'][0]['message']['content'].strip()
+        except Exception as e:
             raise Exception(f"API Connection Test Failed: {str(e)}") from e
+
+    def _encode_image(self, filepath: str) -> str:
+        with open(filepath, 'rb') as f:
+            return base64.b64encode(f.read()).decode('utf-8')
+
+    def analyze_batch(self, frame_batch: List[Tuple[float, str]],
+                      custom_prompt: str = "") -> List[Dict]:
+        """
+        frame_batch: [(timestamp, filepath), ...] 최대 10장
+        반환: [{start, end, original, translated, color, position}, ...]
+        """
+        if not frame_batch:
+            return []
+
+        # 프롬프트 구성
+        prompt_parts = [
+            "Analyze the following frames in order.",
+            "Each frame is from a Japanese anime/video with hardcoded subtitles.",
+            "Extract ONLY character dialogue subtitles (ignore logos, background text, sound effects, UI).",
+            "Return a JSON array of subtitle entries. Each entry must include:",
+            "- frame_index: index within this batch (0-based)",
+            "- original: Japanese text",
+            "- translated: Korean translation",
+            "- color: subtitle text color as HEX (e.g., #FFFFFF)",
+            "- position: one of [top-left, top-center, top-right, middle-left, middle-center, middle-right, bottom-left, bottom-center, bottom-right]",
+            "",
+            "Rules:",
+            "1. Do NOT duplicate consecutive identical subtitles.",
+            "2. Skip frames with no Japanese subtitle.",
+            "3. Return ONLY the JSON array. No explanations, no markdown code blocks."
+        ]
+
+        if custom_prompt:
+            prompt_parts.append("")
+            prompt_parts.append("User custom instructions:")
+            prompt_parts.append(custom_prompt)
+
+        prompt_text = "\n".join(prompt_parts)
+
+        # 멀티모달 content 구성
+        content = [{"type": "text", "text": prompt_text}]
+        for idx, (ts, filepath) in enumerate(frame_batch):
+            b64 = self._encode_image(filepath)
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{b64}"}
+            })
+
+        payload = {
+            "model": self.model_name,
+            "messages": [{"role": "user", "content": content}],
+            "temperature": 0.0,
+            "max_tokens": 4000
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}"
+        }
+
+        try:
+            response = requests.post(
+                f"{self.base_url}/chat/completions",
+                headers=headers, json=payload, timeout=180
+            )
+            if response.status_code != 200:
+                raise Exception(f"HTTP {response.status_code}: {response.text[:500]}")
+            result = response.json()
+            raw_content = result['choices'][0]['message']['content']
+
+            parsed = self._parse_json_response(raw_content)
+            if parsed is None:
+                raise Exception(f"JSON parse failed. Raw response: {raw_content[:500]}")
+
+            # 응답 형식 처리: {"subtitles": [...]} 또는 [...]
+            if isinstance(parsed, dict) and 'subtitles' in parsed:
+                subtitles = parsed['subtitles']
+            elif isinstance(parsed, list):
+                subtitles = parsed
+            else:
+                raise Exception(f"Unexpected response format. Got: {type(parsed).__name__}. Raw: {raw_content[:500]}")
+
+            if not isinstance(subtitles, list):
+                raise Exception(f"Subtitles is not a list. Got: {type(subtitles).__name__}. Raw: {raw_content[:500]}")
+
+            # frame_index -> timestamp 변환
+            results: List[Dict] = []
+            for i, sub in enumerate(subtitles):
+                frame_idx = sub.get('frame_index', i)
+                if 0 <= frame_idx < len(frame_batch):
+                    start_t = frame_batch[frame_idx][0]
+                else:
+                    start_t = frame_batch[0][0] if frame_batch else 0.0
+
+                # end 계산: 다음 subtitle의 start - 0.1초, 마지막은 start + 1.5초
+                if i + 1 < len(subtitles):
+                    next_idx = subtitles[i + 1].get('frame_index', frame_idx + 1)
+                    if 0 <= next_idx < len(frame_batch):
+                        end_t = frame_batch[next_idx][0] - 0.1
+                    else:
+                        end_t = start_t + 1.5
+                else:
+                    end_t = start_t + 1.5
+
+                # 최소 지속시간 보장
+                if end_t <= start_t:
+                    end_t = start_t + 1.0
+
+                results.append({
+                    "start": start_t,
+                    "end": end_t,
+                    "original": sub.get('original', ''),
+                    "translated": sub.get('translated', ''),
+                    "color": sub.get('color', '#FFFFFF'),
+                    "position": sub.get('position', 'bottom-center')
+                })
+
+            return results
+        except Exception as e:
+            raise Exception(f"VLM Processing Error: {str(e)}") from e

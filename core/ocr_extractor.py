@@ -1,211 +1,85 @@
 import cv2
 import numpy as np
+import os
 from typing import List, Dict, Tuple, Callable, Optional
-from difflib import SequenceMatcher
-import re
 
-class OCRExtractor:
+
+class SubtitleFrameFilter:
     """
-    PaddleOCR 기반 영상 자막 추출 클래스.
+    PaddleOCR Detection-Only로 자막 있는 프레임만 골라내는 필터.
+    텍스트 인식(rec)은 하지 않아 속도가 3~5배 빠름.
     """
-    def __init__(self, interval_sec: float = 1.0, similarity_threshold: float = 0.6,
-                 conf_threshold: float = 0.4, use_clahe: bool = False,
+    def __init__(self, interval_sec: float = 1.0, min_boxes: int = 1,
                  log_callback: Optional[Callable] = None):
         self.interval_sec = interval_sec
-        self.similarity_threshold = similarity_threshold
-        self.conf_threshold = conf_threshold
-        self.use_clahe = use_clahe
+        self.min_boxes = min_boxes  # 감지된 텍스트 박스 최소 개수
         self.log_callback = log_callback
         self.ocr = None
 
     def _init_ocr(self):
-        import os
-        os.environ['GLOG_minloglevel'] = '2'
+        import os as _os
+        _os.environ['GLOG_minloglevel'] = '2'
         import logging
         logging.getLogger('ppocr').setLevel(logging.WARNING)
         logging.getLogger('paddle').setLevel(logging.WARNING)
         from paddleocr import PaddleOCR
-        self.ocr = PaddleOCR(use_angle_cls=True, lang='japan')
+        # rec=False: 텍스트 인식 OFF, 감지만
+        self.ocr = PaddleOCR(use_angle_cls=False, lang='japan', rec=False)
 
     def _log(self, msg: str):
         if self.log_callback:
             self.log_callback(msg)
 
-    @staticmethod
-    def _is_junk_text(text: str) -> bool:
-        has_japanese = re.search(r'[\u3040-\u30ff\u4e00-\u9fff]', text)
-        if has_japanese:
-            return False
-        text_stripped = text.strip()
-        if len(text_stripped) <= 15:
-            return False
-        if re.search(r'[a-zA-Z0-9]{15,}', text):
-            return True
-        return False
-
-    def _safe_get_text_conf(self, line_item):
-        try:
-            if not line_item or not isinstance(line_item, (list, tuple)) or len(line_item) < 2:
-                return None, None
-            text_conf = line_item[1]
-            if isinstance(text_conf, (list, tuple)) and len(text_conf) >= 2:
-                return str(text_conf[0]), float(text_conf[1])
-            elif isinstance(text_conf, str):
-                return text_conf, 1.0
-            return None, None
-        except (IndexError, TypeError, ValueError):
-            return None, None
-
-    def _safe_get_box(self, line_item):
-        try:
-            if not line_item or not isinstance(line_item, (list, tuple)) or len(line_item) < 1:
-                return None
-            box = line_item[0]
-            if isinstance(box, (list, tuple)) and len(box) >= 3:
-                return box
-            return None
-        except (IndexError, TypeError):
-            return None
-
-    def _normalize_ocr_result(self, ocr_res):
+    def _normalize_det_result(self, ocr_res):
+        """PaddleOCR Detection 결과 정규화: 텍스트 박스 개수 반환"""
         if ocr_res is None:
-            return []
-        # 최신 PaddleX 기반 PaddleOCR: dict 형식
+            return 0
         if isinstance(ocr_res, dict):
+            # 최신 PaddleX format
             results = []
-            self._extract_text_items(ocr_res, results)
-            return results
+            self._extract_boxes(ocr_res, results)
+            return len(results)
         if not isinstance(ocr_res, (list, tuple)):
-            return []
+            return 0
         if len(ocr_res) == 0:
-            return []
+            return 0
         first = ocr_res[0]
         if first is None:
-            return []
-        # 첫 요소가 딕셔너리면 최신 PaddleX 형식
+            return 0
         if isinstance(first, dict):
             results = []
-            self._extract_text_items(first, results)
-            return results
-        # 구버전: [[[box, (text, conf)], ...], [...]]
+            self._extract_boxes(first, results)
+            return len(results)
         if isinstance(first, (list, tuple)) and len(first) > 0:
             if isinstance(first[0], (list, tuple)):
-                return first
+                return len(first)
             else:
-                return list(ocr_res)
-        return list(ocr_res)
+                return len(list(ocr_res))
+        return len(list(ocr_res))
 
-    def _extract_text_items(self, obj, results):
-        """딕셔너리 내부에서 text/score 키를 가진 항목을 재귀 탐색"""
+    def _extract_boxes(self, obj, results):
+        """dict/list 내부에서 bbox 좌표들을 재귀 탐색"""
         if isinstance(obj, dict):
-            if 'text' in obj and ('score' in obj or 'confidence' in obj):
+            # text 또는 score 키가 있으면 박스 하나
+            if any(k in obj for k in ('text', 'score', 'confidence', 'bbox', 'box')):
                 results.append(obj)
                 return
             for v in obj.values():
-                self._extract_text_items(v, results)
+                self._extract_boxes(v, results)
         elif isinstance(obj, (list, tuple)):
             for item in obj:
-                self._extract_text_items(item, results)
+                self._extract_boxes(item, results)
 
-    def _parse_ocr_result(self, ocr_res, frame_shape, frame_idx: int = 0):
-        lines = self._normalize_ocr_result(ocr_res)
-        h, w = frame_shape[:2]
-
-        if frame_idx <= 5:
-            raw_info = []
-            for l in lines:
-                text, conf = self._safe_get_text_conf(l)
-                if text is not None:
-                    raw_info.append(f"'{text}'({conf:.2f})")
-                else:
-                    raw_info.append(f"PARSE_FAIL:{str(l)[:60]}")
-            self._log(f"  [OCR Debug frame {frame_idx}] raw lines ({len(lines)}): {raw_info}")
-
-        valid_lines = []
-        for l in lines:
-            text, conf = self._safe_get_text_conf(l)
-            if text is None or conf is None:
-                continue
-            if conf < self.conf_threshold:
-                continue
-            if self._is_junk_text(text):
-                continue
-            valid_lines.append(l)
-
-        if not valid_lines:
-            return "", ""
-
-        is_vertical = False
-        v_count = 0
-        for l in valid_lines:
-            box = self._safe_get_box(l)
-            if box is None or len(box) < 3:
-                continue
-            try:
-                box_w = abs(box[1][0] - box[0][0])
-                box_h = abs(box[2][1] - box[1][1])
-                if box_h > box_w * 1.5:
-                    v_count += 1
-            except (IndexError, TypeError):
-                continue
-        is_vertical = v_count > (len(valid_lines) * 0.4)
-
-        def sort_key(x):
-            box = self._safe_get_box(x)
-            if box is None:
-                return (0, 0)
-            try:
-                if is_vertical:
-                    return (-box[0][0], box[0][1])
-                else:
-                    return (box[0][1], box[0][0])
-            except (IndexError, TypeError):
-                return (0, 0)
-
-        valid_lines.sort(key=sort_key)
-        full_text = "".join([self._safe_get_text_conf(l)[0] or "" for l in valid_lines]).strip()
-
-        lowest_line = None
-        lowest_y = -1
-        for l in valid_lines:
-            box = self._safe_get_box(l)
-            if box is None:
-                continue
-            try:
-                cy = (box[0][1] + box[2][1]) / 2
-                if cy > lowest_y:
-                    lowest_y = cy
-                    lowest_line = l
-            except (IndexError, TypeError):
-                continue
-
-        position = "bottom-center"
-        if lowest_line:
-            box = self._safe_get_box(lowest_line)
-            try:
-                cx = (box[0][0] + box[2][0]) / 2
-                cy = (box[0][1] + box[2][1]) / 2
-                if cy < h / 3:
-                    v_pos = "top"
-                elif cy < 2 * h / 3:
-                    v_pos = "middle"
-                else:
-                    v_pos = "bottom"
-                if cx < w / 3:
-                    h_pos = "left"
-                elif cx < 2 * w / 3:
-                    h_pos = "center"
-                else:
-                    h_pos = "right"
-                position = f"{v_pos}-{h_pos}"
-            except (IndexError, TypeError):
-                pass
-
-        return full_text, position
-
-    def extract(self, video_path: str, progress_callback=None) -> List[Dict]:
+    def filter_frames(self, video_path: str, output_folder: str,
+                      progress_callback=None) -> List[Tuple[float, str]]:
+        """
+        자막이 있는 프레임만 추출하여 output_folder에 저장.
+        반환: [(timestamp, filepath), ...]
+        """
         if self.ocr is None:
             self._init_ocr()
+
+        os.makedirs(output_folder, exist_ok=True)
 
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
@@ -214,100 +88,58 @@ class OCRExtractor:
         fps = cap.get(cv2.CAP_PROP_FPS)
         interval_frames = max(1, int(fps * self.interval_sec))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        duration = total_frames / fps if fps > 0 else 0
 
-        results: List[Dict] = []
-        buffered_text = ""
-        buffered_pos = ""
-        start_time = -1.0
+        filtered: List[Tuple[float, str]] = []
         frame_idx = 0
-        last_timestamp = 0.0
-        total_raw_lines = 0
-        total_valid_lines = 0
+        saved_count = 0
+        skipped_count = 0
 
-        self._log(f"  [OCR] Starting: video={video_path}, fps={fps:.1f}, interval={self.interval_sec}s")
-        
-        first_frame_debug = True  # 첫 프레임의 OCR raw 결과를 상세 로깅
+        self._log(f"  [Filter] Starting: video={os.path.basename(video_path)}, "
+                  f"fps={fps:.1f}, interval={self.interval_sec}s, "
+                  f"expected_checks≈{int(duration / self.interval_sec)}")
 
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            frame_idx += 1
+        try:
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                frame_idx += 1
 
-            if frame_idx % interval_frames == 0:
-                curr_t = frame_idx / fps
-                last_timestamp = curr_t
-                if progress_callback:
-                    progress_callback(frame_idx, total_frames)
+                if frame_idx % interval_frames == 0:
+                    curr_t = frame_idx / fps
+                    if progress_callback:
+                        progress_callback(frame_idx, total_frames)
 
-                # 전처리 선택: CLAHE (실험적, 기본 OFF) 또는 원본 BGR
-                if self.use_clahe:
-                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-                    processed = clahe.apply(gray)
-                    target_frame = cv2.cvtColor(processed, cv2.COLOR_GRAY2BGR)
-                else:
-                    target_frame = frame
+                    # 4K 리사이즈
+                    h, w = frame.shape[:2]
+                    max_w = 1920
+                    if w > max_w:
+                        scale = max_w / w
+                        new_w = int(w * scale)
+                        new_h = int(h * scale)
+                        frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-                # 4K 영상은 OCR 처리를 위해 리사이즈 (최대 1920 너비, 비율 유지)
-                h, w = target_frame.shape[:2]
-                max_w = 1920
-                if w > max_w:
-                    scale = max_w / w
-                    new_w = int(w * scale)
-                    new_h = int(h * scale)
-                    target_frame = cv2.resize(target_frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                    try:
+                        ocr_res = self.ocr.ocr(frame, cls=False)
+                        box_count = self._normalize_det_result(ocr_res)
+                    except Exception as e:
+                        self._log(f"  [Filter Error frame {frame_idx}] {str(e)}")
+                        box_count = 0
 
-                try:
-                    import traceback
-                    ocr_res = self.ocr.ocr(target_frame)
-                    if first_frame_debug and ocr_res is not None:
-                        # 첫 프레임의 OCR raw 결과 형식을 상세 로깅 (원인 파악용)
-                        sample = str(ocr_res)[:1000]
-                        self._log(f"  [OCR Sample frame {frame_idx}] type={type(ocr_res).__name__}, len={len(ocr_res) if isinstance(ocr_res, (list, tuple)) else 'N/A'}, content={sample}")
-                        first_frame_debug = False
-                except Exception as e:
-                    tb = traceback.format_exc()
-                    self._log(f"  [OCR Error frame {frame_idx}] {str(e)}")
-                    self._log(f"  [OCR Traceback] {tb}")
-                    ocr_res = None
+                    if box_count >= self.min_boxes:
+                        # 자막 있는 프레임 저장
+                        filename = f"frame_{curr_t:.3f}.jpg"
+                        filepath = os.path.join(output_folder, filename)
+                        cv2.imwrite(filepath, frame, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                        filtered.append((curr_t, filepath))
+                        saved_count += 1
+                    else:
+                        skipped_count += 1
+        finally:
+            cap.release()
 
-                current_raw, current_pos = self._parse_ocr_result(ocr_res, frame.shape, frame_idx)
-
-                lines = self._normalize_ocr_result(ocr_res)
-                total_raw_lines += len(lines)
-                if current_raw:
-                    total_valid_lines += 1
-
-                if current_raw != buffered_text:
-                    if buffered_text != "" and (
-                        current_raw == "" or
-                        SequenceMatcher(None, current_raw, buffered_text).ratio() < self.similarity_threshold
-                    ):
-                        if not self._is_junk_text(buffered_text):
-                            results.append({
-                                "start": start_time,
-                                "end": curr_t,
-                                "original": buffered_text,
-                                "position": buffered_pos
-                            })
-                        start_time = curr_t if current_raw != "" else -1.0
-
-                    buffered_text = current_raw
-                    buffered_pos = current_pos
-
-        cap.release()
-
-        if buffered_text and not self._is_junk_text(buffered_text):
-            if start_time < 0:
-                start_time = last_timestamp
-            results.append({
-                "start": start_time,
-                "end": last_timestamp,
-                "original": buffered_text,
-                "position": buffered_pos
-            })
-
-        self._log(f"  [OCR Summary] frames: {frame_idx // interval_frames}, "
-                  f"raw lines: {total_raw_lines}, valid: {total_valid_lines}, final: {len(results)}")
-        return results
+        self._log(f"  [Filter Summary] checked: {frame_idx // interval_frames}, "
+                  f"saved: {saved_count}, skipped: {skipped_count}, "
+                  f"total_filtered: {len(filtered)}")
+        return filtered

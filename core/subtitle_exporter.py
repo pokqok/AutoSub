@@ -29,7 +29,7 @@ class SubtitleExporter:
     def generate_srt(self, subtitles: List[Dict], output_path: str):
         with open(output_path, "w", encoding="utf-8") as f:
             for idx, sub in enumerate(subtitles, 1):
-                f.write(f"{idx}\n{self.format_time_srt(sub['start'])} --> {self.format_time_srt(sub['end'])}\n{sub['text']}\n\n")
+                f.write(f"{idx}\n{self.format_time_srt(sub['start'])} --> {self.format_time_srt(sub['end'])}\n{sub['translated']}\n\n")
 
     def generate_ass(self, subtitles: List[Dict], output_path: str):
         """

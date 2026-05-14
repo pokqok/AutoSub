@@ -11,8 +11,9 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QThread, Signal
 
-from core.ocr_extractor import OCRExtractor
-from core.llm_client import LLMClient
+from core.ocr_extractor import SubtitleFrameFilter
+from core.vlm_client import VLMClient
+from core.sync_refiner import SyncRefiner
 from core.subtitle_exporter import SubtitleExporter
 
 CONFIG_FILE = "config.json"
@@ -20,7 +21,7 @@ VIDEO_EXTENSIONS = ('.mp4', '.mkv', '.avi', '.mov', '.flv', '.wmv')
 
 class AnalysisWorker(QThread):
     """
-    비디오 리스트를 순회하며 OCR 추출 -> LLM 정제/번역 -> 자막 생성을 수행하는 백그라운드 스레드
+    비디오 리스트를 순회하며 Detection 필터 → VLM 배치 → Sync 보정 → 자막 생성을 수행하는 백그라운드 스레드
     """
     progress = Signal(int, int, str)
     log = Signal(str)
@@ -36,49 +37,25 @@ class AnalysisWorker(QThread):
     def run(self):
         try:
             api_key = self.settings.get('api_key', '')
-            model_name = self.settings.get('model_name', '')
+            model_name = self.settings.get('model_name', 'gemini-3-flash-preview:cloud')
             base_url = self.settings.get('base_url', '')
             custom_prompt = self.settings.get('custom_prompt', '')
-            ocr_interval = self.settings.get('ocr_interval', 0.3)
 
             if not api_key:
                 self.error.emit("API Key is missing!")
                 return
 
-            client = LLMClient(api_key, model_name, base_url)
+            client = VLMClient(api_key, model_name, base_url)
             self.log.emit("Pre-flight API connection test...")
             try:
                 _ = client.test_connection()
                 self.log.emit("  -> API connection verified.")
             except Exception as e:
-                self.error.emit(f"API Connection Test Failed BEFORE processing:\n{str(e)}\n\n"
-                                f"Please fix your API Key, URL, or Model Name before starting analysis.")
+                self.error.emit(f"API Connection Test Failed:\n{str(e)}\n\n"
+                                "Please check your API Key, URL, and Model Name.")
                 return
 
-            # OCR 엔진 선택
-            ocr_engine = self.settings.get('ocr_engine', 'PaddleOCR')
-            self.log.emit(f"Initializing OCR engine: {ocr_engine}...")
-            if ocr_engine == "PaddleOCR-VL-1.5":
-                from core.paddle_vl_extractor import PaddleVLExtractor
-                extractor = PaddleVLExtractor(interval_sec=ocr_interval, log_callback=lambda msg: self.log.emit(msg))
-            else:
-                from core.ocr_extractor import OCRExtractor
-                extractor = OCRExtractor(interval_sec=ocr_interval, log_callback=lambda msg: self.log.emit(msg))
             exporter = SubtitleExporter()
-
-            # OCR 엔진 미리 초기화 (실패하면 즉시 에러, 프레임 처리 전에)
-            self.log.emit("Warming up OCR engine (first run may download models)...")
-            try:
-                if ocr_engine == "PaddleOCR":
-                    extractor._init_ocr()
-                else:
-                    extractor._load_model()
-                self.log.emit("  -> OCR engine ready.")
-            except Exception as e:
-                self.error.emit(f"OCR Engine initialization failed:\n{str(e)}\n\n"
-                                f"This usually means model download failed or PaddleOCR/paddlepaddle is not installed correctly.")
-                return
-
             processed_count = 0
             total_videos = len(self.video_list)
             last_results = []
@@ -89,61 +66,81 @@ class AnalysisWorker(QThread):
                 ext = ".srt" if self.output_format == "SRT" else ".ass"
                 subtitle_path = os.path.splitext(video_path)[0] + ext
 
-                # Phase 1: OCR 추출
-                self.log.emit(f"  Phase 1/2: OCR extracting Japanese text (interval={ocr_interval}s)...")
+                # 임시 폴더
+                temp_dir = os.path.join(os.path.dirname(video_path), ".autosub_temp")
+                os.makedirs(temp_dir, exist_ok=True)
+
                 try:
-                    def ocr_progress(curr, total):
-                        self.progress.emit(curr, total, f"OCR processing {os.path.basename(video_path)}...")
-                    ocr_results = extractor.extract(video_path, progress_callback=ocr_progress)
-                except Exception as e:
-                    self.error.emit(f"OCR Error ({os.path.basename(video_path)}): {str(e)}")
-                    return
+                    # Phase 1: Detection-Only 필터
+                    self.log.emit("  Phase 1/3: Detection-Only filter...")
+                    frame_filter = SubtitleFrameFilter(
+                        interval_sec=1.0,
+                        log_callback=lambda msg: self.log.emit(msg)
+                    )
 
-                if ocr_results is None:
-                    self.log.emit("  -> OCR returned None (initialization failed).")
-                    self.error.emit(f"OCR initialization failed for {os.path.basename(video_path)}. Check model download or PaddleOCR installation.")
-                    return
-                self.log.emit(f"  -> OCR extracted {len(ocr_results)} raw lines.")
-                if not ocr_results:
-                    self.log.emit(f"  -> WARNING: OCR returned 0 segments for {os.path.basename(video_path)}. "
-                                     f"Possible causes: (1) No Japanese subtitles in video, "
-                                     f"(2) OCR confidence threshold too high, "
-                                     f"(3) Junk filter too strict, "
-                                     f"(4) Wrong OCR engine selected.")
-                    continue
+                    def filter_progress(curr, total):
+                        self.progress.emit(curr, total, f"Filtering {os.path.basename(video_path)}...")
 
-                # Phase 2: LLM 정제/번역
-                self.log.emit(f"  Phase 2/2: LLM refining + translating with '{model_name}'...")
-                try:
-                    final_results = client.translate_and_refine(ocr_results, custom_prompt=custom_prompt)
-                except Exception as e:
-                    self.error.emit(f"LLM Error ({os.path.basename(video_path)}): {str(e)}")
-                    return
+                    subtitle_frames = frame_filter.filter_frames(
+                        video_path, temp_dir, progress_callback=filter_progress
+                    )
+                    self.log.emit(f"  -> {len(subtitle_frames)} subtitle frames detected")
 
-                self.log.emit(f"  -> LLM returned {len(final_results)} refined lines.")
-                if not final_results:
-                    self.log.emit(f"  -> WARNING: LLM returned empty result for {os.path.basename(video_path)}.")
-                    continue
+                    if not subtitle_frames:
+                        self.log.emit(f"  -> WARNING: No subtitle frames detected in {os.path.basename(video_path)}.")
+                        continue
 
-                # Phase 3: 세부 싱크 보정
-                self.log.emit(f"  Phase 3/3: Fine-tuning subtitle sync (0.05s precision)...")
-                try:
-                    from core.sync_refiner import SyncRefiner
-                    refiner = SyncRefiner()
-                    final_results = refiner.refine(video_path, final_results)
-                    self.log.emit(f"  -> Sync refinement complete.")
-                except Exception as e:
-                    self.log.emit(f"  -> WARNING: Sync refinement failed, using LLM timing: {str(e)}")
+                    # Phase 2: VLM 배치 분석
+                    self.log.emit(f"  Phase 2/3: VLM batch analysis with '{model_name}'...")
+                    BATCH_SIZE = 10
+                    all_results = []
+                    total_batches = (len(subtitle_frames) + BATCH_SIZE - 1) // BATCH_SIZE
 
-                # Save
-                if self.output_format == "SRT":
-                    exporter.generate_srt(final_results, subtitle_path)
-                else:
-                    exporter.generate_ass(final_results, subtitle_path)
+                    for b_idx in range(0, len(subtitle_frames), BATCH_SIZE):
+                        batch = subtitle_frames[b_idx:b_idx + BATCH_SIZE]
+                        batch_num = b_idx // BATCH_SIZE + 1
+                        self.log.emit(f"  -> Batch {batch_num}/{total_batches} ({len(batch)} frames)")
 
-                processed_count += 1
-                last_results = final_results
-                self.log.emit(f"Successfully saved {self.output_format}: {os.path.basename(subtitle_path)}")
+                        try:
+                            results = client.analyze_batch(batch, custom_prompt=custom_prompt)
+                            all_results.extend(results)
+                            self.log.emit(f"  -> Extracted {len(results)} subtitles from batch {batch_num}")
+                        except Exception as e:
+                            self.log.emit(f"  -> VLM batch {batch_num} failed: {str(e)}")
+                            continue
+
+                    self.log.emit(f"  -> VLM total: {len(all_results)} subtitles extracted")
+                    if not all_results:
+                        self.log.emit(f"  -> WARNING: VLM returned no subtitles for {os.path.basename(video_path)}.")
+                        continue
+
+                    # Phase 3: 세부 싱크 보정
+                    self.log.emit("  Phase 3/3: Fine-tuning subtitle sync (0.1s precision)...")
+                    try:
+                        refiner = SyncRefiner()
+                        final_results = refiner.refine(video_path, all_results)
+                        self.log.emit("  -> Sync refinement complete.")
+                    except Exception as e:
+                        self.log.emit(f"  -> WARNING: Sync refinement failed, using VLM timing: {str(e)}")
+                        final_results = all_results
+
+                    # Save
+                    if self.output_format == "SRT":
+                        exporter.generate_srt(final_results, subtitle_path)
+                    else:
+                        exporter.generate_ass(final_results, subtitle_path)
+
+                    processed_count += 1
+                    last_results = final_results
+                    self.log.emit(f"Successfully saved {self.output_format}: {os.path.basename(subtitle_path)}")
+
+                finally:
+                    # temp 폴더 정리
+                    if os.path.exists(temp_dir):
+                        try:
+                            shutil.rmtree(temp_dir)
+                        except Exception as e:
+                            self.log.emit(f"  -> Warning: Failed to clean temp dir: {str(e)}")
 
             self.finished.emit(processed_count, last_results)
 
@@ -204,8 +201,8 @@ class SubtitleVLMApp(QMainWindow):
         
         model_layout = QHBoxLayout()
         model_layout.addWidget(QLabel("Model Name:"))
-        self.model_input = QLineEdit(self.settings.get('model_name', 'gemma-4-31b'))
-        self.model_input.setPlaceholderText("e.g., gemma-4-31b, kimi-k2.6, gemini-2.5-flash")
+        self.model_input = QLineEdit(self.settings.get('model_name', 'gemini-3-flash-preview:cloud'))
+        self.model_input.setPlaceholderText("e.g., gemini-3-flash-preview:cloud, gemma3:cloud")
         model_layout.addWidget(self.model_input)
         settings_group.addLayout(model_layout)
 
@@ -525,7 +522,7 @@ class SubtitleVLMApp(QMainWindow):
         QApplication.processEvents()
 
         try:
-            client = LLMClient(api_key, model_name, base_url)
+            client = VLMClient(api_key, model_name, base_url)
             response = client.test_connection()
             self.log_window.append(f"[TEST] ✅ API Connection OK! Response: '{response}'")
             self.status_label.setText("API Connection OK")
