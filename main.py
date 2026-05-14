@@ -127,7 +127,9 @@ class AnalysisWorker(QThread):
                         self.progress.emit(pct, 100, f"Phase 1/3: Dense frames {curr}/{total}")
                     
                     dense_frames = frame_filter.extract_dense_frames(
-                        video_path, subtitle_frames, temp_dir, progress_callback=dense_progress
+                        video_path, subtitle_frames, temp_dir,
+                        window_sec=1.5,
+                        progress_callback=dense_progress
                     )
                     self.log.emit(f"  -> Dense frames: {len(dense_frames)}")
                     self.progress.emit(100, 100, f"Phase 1/3: Done ({len(subtitle_frames)} frames, {len(dense_frames)} dense)")
