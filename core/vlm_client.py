@@ -124,10 +124,9 @@ class VLMClient:
             "CRITICAL RULES:",
             "1. MERGE DUPLICATES: The SAME line appearing twice with overlapping or adjacent times must be merged into ONE entry covering the full range.",
             "2. FIX OVERLAPS: If subtitle A ends AFTER subtitle B starts, shorten A so it ends exactly when B starts. No artificial gap is needed—just prevent collision.",
-            "3. STREAMING MERGE: Consecutive fragments building one sentence (e.g. '아..' → '아..앗' → '아..앗..앙') must be merged into ONE entry with the COMPLETE text.",
-            "4. CONTEXT/TONE FIX: If a translation is obviously out of character (e.g. childish character suddenly speaks formally), correct ONLY the tone to match the rest. Do NOT re-translate accurate lines.",
-            "5. PRESERVE: Correct translations, accurate colors, and valid positions must remain untouched.",
-            "6. RETURN: Output ONLY the corrected JSON array. Same keys: start, end, original, translated, color, position. No markdown, no commentary.",
+            "3. CONTEXT/TONE FIX: If a translation is obviously out of character (e.g. childish character suddenly speaks formally), correct ONLY the tone to match the rest. Do NOT re-translate accurate lines.",
+            "4. PRESERVE: Correct translations, accurate colors, and valid positions must remain untouched.",
+            "5. RETURN: Output ONLY the corrected JSON array. Same keys: start, end, original, translated, color, position. No markdown, no commentary.",
         ]
         if custom_prompt:
             prompt_lines.append(f"\nUser custom instructions:\n{custom_prompt}")
@@ -219,10 +218,7 @@ class VLMClient:
             "5. OCR CORRECTION: The frames may have typos, broken characters, or blur. Infer the correct Japanese text from context and fix silently, then translate.",
             "6. DIALOGUE ONLY: Extract ONLY spoken character dialogue. Ignore sound effects (効果音), logos, background text, UI, and signs.",
             "7. NO DUPLICATES: The same line continuing across consecutive frames must appear only ONCE.",
-            "8. CONTINUOUS LINES: If the SAME character is speaking and the text builds up gradually across frames (e.g. '아..' → '아..앗' → '아..앗..앙'), treat it as ONE continuous subtitle from the first frame to the last frame where the complete text appears. Do NOT split it into separate entries.",
-            "9. STREAMING TEXT: When a subtitle appears word-by-word across frames, return ONLY the final complete text with frame_index pointing to the LAST frame where it is fully visible.",
-            "10. GAP RULE: If two subtitles belong to the SAME continuous speech with no real pause between them, merge them into a single entry with the combined start-to-end range.",
-            "11. TIMING: Short single-utterance lines (single moans) must have max 0.8s duration. Do NOT stretch them.",
+            "8. TIMING: Short single-utterance lines (single moans) must have max 0.8s duration. Do NOT stretch them.",
             "",
             "Output: Return ONLY a valid JSON array. Absolutely no markdown code blocks, no explanations, no greetings, no commentary.",
             "Each entry in the array must include:",
