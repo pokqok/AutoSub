@@ -289,7 +289,7 @@ class CRAFTFrameFilter:
 
         while next_idx < n_needed and current_frame_idx < total_frames:
             target_t, target_bbox = sorted_items[next_idx]
-            target_frame_idx = int(target_t * fps)
+            target_frame_idx = round(target_t * fps)
 
             # grab()으로 필요한 프레임까지 빠르게 건너뛰기 (디코딩 없이)
             while current_frame_idx < target_frame_idx:
@@ -297,10 +297,13 @@ class CRAFTFrameFilter:
                     break
                 current_frame_idx += 1
 
-            if current_frame_idx >= total_frames:
-                break
+            if current_frame_idx != target_frame_idx:
+                next_idx += 1
+                continue
 
-            # retrieve()로 실제 디코딩 (필요한 프레임만)
+            # target 프레임에 도달했으므로 grab() + retrieve()
+            if not cap.grab():
+                break
             ret, frame = cap.retrieve()
             current_frame_idx += 1
 
