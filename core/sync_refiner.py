@@ -22,8 +22,8 @@ class SyncRefiner:
     LLM이 반환한 대략적 타이밍을 프레임 단위(0.05초)로 정밀 보정합니다.
     position 필드 기반 ROI를 사용하여 배경 노이즈를 최소화합니다.
     """
-    def __init__(self, scan_radius_sec: float = 1.0, scan_interval_sec: float = 0.1,
-                 diff_threshold: float = 8.0):
+    def __init__(self, scan_radius_sec: float = 0.5, scan_interval_sec: float = 0.1,
+                 diff_threshold: float = 15.0):
         self.scan_radius_sec = scan_radius_sec
         self.scan_interval_sec = scan_interval_sec
         self.diff_threshold = diff_threshold

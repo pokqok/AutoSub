@@ -102,7 +102,10 @@ class AnalysisWorker(QThread):
                         self.log.emit(f"  -> Batch {batch_num}/{total_batches} ({len(batch)} frames)")
 
                         try:
-                            results = client.analyze_batch(batch, custom_prompt=custom_prompt)
+                            results = client.analyze_batch(
+                                batch, custom_prompt=custom_prompt,
+                                previous_subtitles=all_results[-10:]  # 이전 결과 10개 전달
+                            )
                             all_results.extend(results)
                             self.log.emit(f"  -> Extracted {len(results)} subtitles from batch {batch_num}")
                         except Exception as e:

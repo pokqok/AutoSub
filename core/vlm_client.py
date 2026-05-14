@@ -86,13 +86,16 @@ class VLMClient:
             return base64.b64encode(f.read()).decode('utf-8')
 
     def analyze_batch(self, frame_batch: List[Dict],
-                      custom_prompt: str = "") -> List[Dict]:
+                      custom_prompt: str = "",
+                      previous_subtitles: List[Dict] = None) -> List[Dict]:
         """
         frame_batch: [{"timestamp", "filepath", "bbox", "orig_w", "orig_h"}, ...] 최대 10장
+        previous_subtitles: 이전 배치에서 추출된 자막 목록 (중복 방지용)
         반환: [{start, end, original, translated, color, position}, ...]
         """
         if not frame_batch:
             return []
+        previous_subtitles = previous_subtitles or []
 
         def _bbox_to_position(bbox, orig_w, orig_h):
             """bbox 좌표로 position 문자열 반환"""
@@ -124,8 +127,8 @@ class VLMClient:
             "3. Subtitle Format: Keep each line concise and readable for on-screen subtitles. Do NOT output overly long explanations.",
             "4. No Censorship: Do not soften explicit words, slang, or adult expressions. Translate them directly and accurately.",
             "5. Extract ONLY character dialogue subtitles. Ignore sound effects (効果音), logos, background text, UI elements, and non-dialogue text.",
-            "6. Do NOT duplicate consecutive identical subtitles.",
-            "7. Skip frames with no Japanese dialogue subtitle.",
+            "6. NO DUPLICATES: If a subtitle is identical or nearly identical to one already in the list below, do NOT output it again. The same line continuing across frames should appear only ONCE at its first occurrence.",
+            "7. Short lines (single moans like '응', '아', '훗') should have very short durations (max 0.8s). Do NOT stretch them.",
             "",
             "Output format: Return ONLY a JSON array. No explanations, no markdown code blocks, no greetings, no additional text.",
             "Each entry in the array must include:",
@@ -147,6 +150,15 @@ class VLMClient:
             prompt_lines.append(custom_prompt)
 
         prompt_text = "\n".join(prompt_lines)
+
+        # 이전 배치에서 추출된 자막 컨텍스트 추가 (중복 방지)
+        if previous_subtitles:
+            ctx_lines = ["", "Previously extracted subtitles (DO NOT duplicate these):"]
+            for prev in previous_subtitles[-5:]:  # 최근 5개만
+                orig = prev.get('original', '')
+                trans = prev.get('translated', '')
+                ctx_lines.append(f"- {orig} = {trans}")
+            prompt_text += "\n" + "\n".join(ctx_lines)
 
         # 멀티모달 content 구성
         content = [{"type": "text", "text": prompt_text}]
@@ -200,7 +212,6 @@ class VLMClient:
                 if 0 <= frame_idx < len(frame_batch):
                     item = frame_batch[frame_idx]
                     start_t = item["timestamp"]
-                    # position: VLM 반환값이 없으면 bbox 기반 계산
                     pos = sub.get('position')
                     if not pos and "bbox" in item:
                         pos = _bbox_to_position(
@@ -210,7 +221,7 @@ class VLMClient:
                     start_t = frame_batch[0]["timestamp"] if frame_batch else 0.0
                     pos = sub.get('position', 'bottom-center')
 
-                # end 계산
+                # end 계산: 다음 자막 직전 또는 기본 1.0초
                 if i + 1 < len(subtitles):
                     next_idx = subtitles[i + 1].get('frame_index', frame_idx + 1)
                     if 0 <= next_idx < len(frame_batch):
@@ -220,8 +231,16 @@ class VLMClient:
                 else:
                     end_t = start_t + 1.0
 
+                # 짧은 대사 (효과음/신음)는 최대 0.8초로 제한
+                text_len = len(sub.get('translated', ''))
+                if text_len <= 3 and (end_t - start_t) > 0.8:
+                    end_t = start_t + 0.8
+
+                # 최소/최대 지속시간 보장
                 if end_t <= start_t:
                     end_t = start_t + 0.5
+                if (end_t - start_t) > 3.0:
+                    end_t = start_t + 3.0
 
                 results.append({
                     "start": start_t,
