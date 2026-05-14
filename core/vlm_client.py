@@ -19,7 +19,7 @@ class VLMClient:
             self.base_url += '/v1'
 
     def _parse_json_response(self, raw_text: str) -> Any:
-        """JSON 응답 파싱 (마크다운 코드블록, 중괄호 추출 등)"""
+        """JSON 응답 파싱 (마크다운 코드블록, 중괄호/대괄호 추출 등)"""
         if not raw_text:
             return None
         code_block_pattern = r'```(?:json)?\s*([\s\S]*?)\s*```'
@@ -27,21 +27,31 @@ class VLMClient:
         if matches:
             raw_text = matches[-1].strip()
         raw_text = raw_text.strip()
+
+        # 1. 전체를 그대로 파싱 시도
         try:
             return json.loads(raw_text)
         except json.JSONDecodeError:
             pass
-        json_pattern = r'(\{[\s\S]*\})'
-        json_matches = re.findall(json_pattern, raw_text)
-        if json_matches:
+
+        # 2. JSON array([...])를 먼저 찾아 시도
+        array_pattern = r'(\[[\s\S]*\])'
+        array_matches = re.findall(array_pattern, raw_text)
+        if array_matches:
             try:
-                return json.loads(json_matches[-1])
+                return json.loads(array_matches[-1])
             except json.JSONDecodeError:
                 pass
-        try:
-            return json.loads(raw_text)
-        except json.JSONDecodeError:
-            pass
+
+        # 3. JSON object({...})를 찾아 시도
+        obj_pattern = r'(\{[\s\S]*\})'
+        obj_matches = re.findall(obj_pattern, raw_text)
+        if obj_matches:
+            try:
+                return json.loads(obj_matches[-1])
+            except json.JSONDecodeError:
+                pass
+
         return None
 
     def test_connection(self) -> str:
