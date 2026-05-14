@@ -263,20 +263,20 @@ class VLMClient:
             "model": self.model_name,
             "messages": [{"role": "user", "content": content}],
             "temperature": 0.0,
-            "max_tokens": 4000  # Ollama 호환성을 위해 4000으로 제한
+            "max_tokens": 8000  # 응답 잘림 방지
         }
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}"
         }
 
-        # Retry: 실패 시 최대 5회 재시도 (delay 3s > 6s > 12s > 24s > 48s)        
+        # Retry: 실패 시 최대 10회 재시도 (delay 3s > 6s > 12s > 24s > 48s > 96s > 96s...)
         last_error = None
         parsed = None
         raw_content = ""
-        for attempt in range(5):
+        for attempt in range(10):
             try:
-                print(f"[VLMClient] API call attempt {attempt+1}/5...")
+                print(f"[VLMClient] API call attempt {attempt+1}/10...")
                 response = requests.post(
                     f"{self.base_url}/chat/completions",
                     headers=headers, json=payload, timeout=300
@@ -292,7 +292,7 @@ class VLMClient:
                     print(f"[VLMClient] API error: {last_error}")
                     if status != 429 and 400 <= status < 500:
                         break
-                    if attempt < 4:
+                    if attempt < 9:
                         wait = min(3 * (2 ** attempt), 96)
                         print(f"[VLMClient] Retrying in {wait}s...")
                         time.sleep(wait)
@@ -305,9 +305,9 @@ class VLMClient:
                 print(f"[VLMClient] Content len={len(raw_content)}, preview=[{raw_content[:100]}]")
 
                 if not raw_content.strip():
-                    last_error = f"Empty content (attempt {attempt+1}/5). API returned HTTP 200 with empty message."
+                    last_error = f"Empty content (attempt {attempt+1}/10). API returned HTTP 200 with empty message."
                     print(f"[VLMClient] {last_error}")
-                    if attempt < 4:
+                    if attempt < 9:
                         wait = min(3 * (2 ** attempt), 96)
                         print(f"[VLMClient] Retrying in {wait}s...")
                         time.sleep(wait)
@@ -315,9 +315,9 @@ class VLMClient:
 
                 parsed = self._parse_json_response(raw_content)
                 if parsed is None:
-                    last_error = f"JSON parse failed (attempt {attempt+1}/5). First 500 chars: {raw_content[:500]}"
+                    last_error = f"JSON parse failed (attempt {attempt+1}/10). First 500 chars: {raw_content[:500]}"
                     print(f"[VLMClient] {last_error}")
-                    if attempt < 4:
+                    if attempt < 9:
                         wait = min(3 * (2 ** attempt), 96)
                         print(f"[VLMClient] Retrying in {wait}s...")
                         time.sleep(wait)
@@ -327,7 +327,7 @@ class VLMClient:
                 if not isinstance(parsed, list):
                     last_error = f"Unexpected format. Got: {type(parsed).__name__}. Raw: {raw_content[:500]}"
                     print(f"[VLMClient] {last_error}")
-                    if attempt < 4:
+                    if attempt < 9:
                         wait = min(3 * (2 ** attempt), 96)
                         print(f"[VLMClient] Retrying in {wait}s...")
                         time.sleep(wait)
@@ -337,8 +337,8 @@ class VLMClient:
 
             except Exception as e:
                 last_error = str(e)
-                print(f"[VLMClient] Exception on attempt {attempt+1}/5: {last_error}")
-                if attempt < 4:
+                print(f"[VLMClient] Exception on attempt {attempt+1}/10: {last_error}")
+                if attempt < 9:
                     wait = min(3 * (2 ** attempt), 96)
                     print(f"[VLMClient] Retrying in {wait}s...")
                     time.sleep(wait)
