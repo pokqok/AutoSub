@@ -124,11 +124,12 @@ class SyncRefiner:
         return sim >= threshold
 
     def _binary_search_edge(self, ref_roi, position, bbox, lo: float, hi: float,
-                            direction: str, frame_list: List[Dict], min_resolution: float = 0.1) -> float:
+                            direction: str, frame_list: List[Dict],
+                            threshold: float = 0.55, min_resolution: float = 0.1) -> float:
         """이진 탐색으로 자막 경계를 좁혀갑니다."""
         while (hi - lo) > min_resolution:
             mid = (lo + hi) / 2
-            is_same = self._is_same_subtitle(mid, ref_roi, position, bbox, frame_list)
+            is_same = self._is_same_subtitle(mid, ref_roi, position, bbox, frame_list, threshold)
             if direction == "appear":
                 if is_same:
                     hi = mid
@@ -142,7 +143,7 @@ class SyncRefiner:
         return hi if direction == "appear" else lo
 
     def _verify_boundary(self, boundary: float, direction: str, ref_roi, position, bbox,
-                         frame_list: List[Dict]) -> float:
+                         frame_list: List[Dict], threshold: float = 0.55) -> float:
         """
         B. 경계 ±0.1s 프레임 추가 검증.
         불일치 시 0.1s씩 보정 재시도 (최대 3회).
@@ -151,8 +152,8 @@ class SyncRefiner:
         max_t = max(f["timestamp"] for f in frame_list) if frame_list else boundary
 
         for _ in range(3):
-            before = self._is_same_subtitle(boundary - 0.1, ref_roi, position, bbox, frame_list)
-            after  = self._is_same_subtitle(boundary + 0.1, ref_roi, position, bbox, frame_list)
+            before = self._is_same_subtitle(boundary - 0.1, ref_roi, position, bbox, frame_list, threshold)
+            after  = self._is_same_subtitle(boundary + 0.1, ref_roi, position, bbox, frame_list, threshold)
 
             if direction == "appear":
                 # before = 없음(False), after = 있음(True) 가 정상
@@ -178,7 +179,8 @@ class SyncRefiner:
 
     def _find_appearance(self, marker_start: float, position=None, bbox=None,
                          frame_list: List[Dict] = None,
-                         ref_roi=None) -> float:
+                         ref_roi=None,
+                         threshold: float = 0.55) -> float:
         """기본 marker_start 앞 1초에서 시작. SAME이면 0.5초씩 더 앞으로 확장."""
         if not frame_list:
             return marker_start
@@ -191,18 +193,19 @@ class SyncRefiner:
         lo = max(min_t, marker_start - 1.0)
         hi = marker_start
 
-        while self._is_same_subtitle(lo, ref_roi, position, bbox, frame_list) and lo > min_t:
+        while self._is_same_subtitle(lo, ref_roi, position, bbox, frame_list, threshold) and lo > min_t:
             lo = max(min_t, lo - 0.5)
 
         return self._verify_boundary(
-            self._binary_search_edge(ref_roi, position, bbox, lo, hi, "appear", frame_list),
-            "appear", ref_roi, position, bbox, frame_list
+            self._binary_search_edge(ref_roi, position, bbox, lo, hi, "appear", frame_list, threshold),
+            "appear", ref_roi, position, bbox, frame_list, threshold
         )
 
     def _find_disappearance(self, marker_end: float, next_start: float,
                             position=None, bbox=None,
                             frame_list: List[Dict] = None,
-                            ref_roi=None) -> float:
+                            ref_roi=None,
+                            threshold: float = 0.55) -> float:
         """기본 marker_end 뒤 1초에서 시작. SAME이면 0.5초씩 더 뒤로 확장."""
         if not frame_list:
             return marker_end
@@ -216,13 +219,13 @@ class SyncRefiner:
         search_limit = next_start if next_start != float('inf') else marker_end + 5.0
         hi = min(search_limit, marker_end + 1.0, max_t)
 
-        while (self._is_same_subtitle(hi, ref_roi, position, bbox, frame_list)
+        while (self._is_same_subtitle(hi, ref_roi, position, bbox, frame_list, threshold)
                and hi < search_limit - 0.1):
             hi = min(hi + 0.5, search_limit, max_t)
 
         return self._verify_boundary(
-            self._binary_search_edge(ref_roi, position, bbox, lo, hi, "disappear", frame_list),
-            "disappear", ref_roi, position, bbox, frame_list
+            self._binary_search_edge(ref_roi, position, bbox, lo, hi, "disappear", frame_list, threshold),
+            "disappear", ref_roi, position, bbox, frame_list, threshold
         )
 
     def refine(self, video_path: str, subtitles: List[Dict],
@@ -237,43 +240,50 @@ class SyncRefiner:
             return subtitles
 
         refined: List[Dict] = []
+        min_t = min(f["timestamp"] for f in frame_list)
+
         for i, sub in enumerate(subtitles):
             position = sub.get("position")
             original_start = sub["start"]
-            original_end = sub["end"]
             # VLM 결과에 bbox 없으면 nearest frame의 bbox 사용
             nearest = self._get_nearest_frame(original_start, frame_list)
             bbox = sub.get("bbox") or (nearest.get("bbox") if nearest else None)
             next_start = subtitles[i + 1]["start"] if i + 1 < len(subtitles) else float('inf')
 
-            # ref_roi를 original_start에서 한 번만 추출 (핵심 수정)
             ref_roi = self._get_subtitle_roi_at(original_start, position, bbox, frame_list)
             if ref_roi is None or ref_roi.size == 0:
-                refined.append(sub)
+                # 스킵 경로: start==end 보정 추가
+                sub_copy = dict(sub)
+                if sub_copy["end"] <= sub_copy["start"]:
+                    sub_copy["end"] = sub_copy["start"] + 1.0
+                refined.append(sub_copy)
                 continue
 
-            # 등장 지점 (ref_roi 전달)
+            # ★ 적응형 threshold: 자막 등장 전 배경과의 유사도를 baseline으로 측정
+            pre_t = max(min_t, original_start - 2.0)
+            pre_roi = self._get_subtitle_roi_at(pre_t, position, bbox, frame_list)
+            if pre_roi is not None and pre_roi.size > 0:
+                baseline_sim = self._roi_similarity(pre_roi, ref_roi)
+                # baseline보다 0.15 높아야 "자막 있음"으로 판정
+                adaptive_threshold = min(0.75, baseline_sim + 0.15)
+            else:
+                adaptive_threshold = 0.55
+
             refined_start = self._find_appearance(
-                original_start, position, bbox, frame_list, ref_roi
+                original_start, position, bbox, frame_list, ref_roi, adaptive_threshold
             )
 
-            # 사라짐 지점 (ref_roi 전달)
             disappear_search_start = max(original_start + 0.3, refined_start + 0.2)
             refined_end = self._find_disappearance(
-                disappear_search_start, next_start, position, bbox, frame_list, ref_roi
+                disappear_search_start, next_start, position, bbox,
+                frame_list, ref_roi, adaptive_threshold
             )
 
-            # 다음 자막과 겹치지 않도록 clamp
             if refined_end > next_start:
                 refined_end = next_start
-
             if refined_end <= refined_start:
                 refined_end = refined_start + 0.5
 
-            refined.append({
-                **sub,
-                "start": refined_start,
-                "end": refined_end,
-            })
+            refined.append({**sub, "start": refined_start, "end": refined_end})
 
         return refined
