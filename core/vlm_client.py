@@ -214,14 +214,14 @@ class VLMClient:
                 if i + 1 < len(subtitles):
                     next_idx = subtitles[i + 1].get('frame_index', frame_idx + 1)
                     if 0 <= next_idx < len(frame_batch):
-                        end_t = frame_batch[next_idx]["timestamp"] - 0.1
+                        end_t = frame_batch[next_idx]["timestamp"] - 0.05
                     else:
-                        end_t = start_t + 1.5
+                        end_t = start_t + 1.0
                 else:
-                    end_t = start_t + 1.5
+                    end_t = start_t + 1.0
 
                 if end_t <= start_t:
-                    end_t = start_t + 1.0
+                    end_t = start_t + 0.5
 
                 results.append({
                     "start": start_t,
