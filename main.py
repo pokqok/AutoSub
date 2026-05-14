@@ -133,7 +133,7 @@ class AnalysisWorker(QThread):
                     self.log.emit("  Phase 3/3: Fine-tuning subtitle sync (0.1s precision)...")
                     try:
                         refiner = SyncRefiner()
-                        final_results = refiner.refine(video_path, all_results)
+                        final_results = refiner.refine(video_path, all_results, subtitle_frames)
                         self.log.emit("  -> Sync refinement complete.")
                     except Exception as e:
                         self.log.emit(f"  -> WARNING: Sync refinement failed, using VLM timing: {str(e)}")
