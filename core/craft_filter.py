@@ -46,7 +46,10 @@ class CRAFTFrameFilter:
         self.craft = Craft(
             output_dir=None,       # 파일 저장 안 함
             crop_type="poly",
-            cuda=False             # GPU 없으면 False
+            cuda=False,             # GPU 없으면 False
+            text_threshold=self.text_threshold,
+            link_threshold=self.link_threshold,
+            low_text=self.low_text
         )
 
     def _log(self, msg: str):
