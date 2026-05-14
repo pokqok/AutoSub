@@ -3,6 +3,7 @@ import json
 import re
 import requests
 import os
+import time
 from typing import List, Dict, Tuple, Any
 
 
@@ -19,7 +20,7 @@ class VLMClient:
             self.base_url += '/v1'
 
     def _parse_json_response(self, raw_text: str) -> Any:
-        """JSON 응답 파싱 (마크다운 코드블록, 중괄호/대괄호 추출 등)"""
+        """JSON 응답 파싱. 마크다운, 중괄호/대괄호 추출. 잘린 JSON도 복구."""
         if not raw_text:
             return None
         code_block_pattern = r'```(?:json)?\s*([\s\S]*?)\s*```'
@@ -28,7 +29,7 @@ class VLMClient:
             raw_text = matches[-1].strip()
         raw_text = raw_text.strip()
 
-        # 1. 전체를 그대로 파싱 시도
+        # 1. 전체 그대로 파싱 시도
         try:
             return json.loads(raw_text)
         except json.JSONDecodeError:
@@ -51,6 +52,26 @@ class VLMClient:
                 return json.loads(obj_matches[-1])
             except json.JSONDecodeError:
                 pass
+
+        # 4. 잘린 JSON 복구: 닫히지 않은 마지막 객체는 버리고, 완성된 객체만 추출
+        # 배열 내부에서 마지막 완성된 객체까지 찾기
+        truncated_match = re.search(r'(\[.*?\{.*?\}\s*\])(?!\s*\{)', raw_text, re.DOTALL)
+        if truncated_match:
+            try:
+                return json.loads(truncated_match.group(1) + ']')
+            except json.JSONDecodeError:
+                pass
+
+        # 5. 마지막 시도: 모든 객체 패턴을 찾아서 하나씩 파싱
+        objects = []
+        for obj_str in re.finditer(r'\{[^{}]*"frame_index"[^{}]*\}', raw_text):
+            try:
+                obj = json.loads(obj_str.group(0))
+                objects.append(obj)
+            except json.JSONDecodeError:
+                continue
+        if objects:
+            return objects
 
         return None
 
@@ -173,84 +194,102 @@ class VLMClient:
             "model": self.model_name,
             "messages": [{"role": "user", "content": content}],
             "temperature": 0.0,
-            "max_tokens": 4000
+            "max_tokens": 8000  # 긴 응답/잘리는 문제 방지
         }
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}"
         }
 
-        try:
-            response = requests.post(
-                f"{self.base_url}/chat/completions",
-                headers=headers, json=payload, timeout=180
-            )
-            if response.status_code != 200:
-                raise Exception(f"HTTP {response.status_code}: {response.text[:500]}")
-            result = response.json()
-            raw_content = result['choices'][0]['message']['content']
+        # Retry: 실패 시 최대 3회 재시도 (지수 백오프)
+        last_error = None
+        parsed = None
+        raw_content = ""
+        for attempt in range(3):
+            try:
+                response = requests.post(
+                    f"{self.base_url}/chat/completions",
+                    headers=headers, json=payload, timeout=180
+                )
+                if response.status_code != 200:
+                    err_text = response.text[:500]
+                    last_error = f"HTTP {response.status_code}: {err_text}"
+                    if response.status_code == 429:
+                        wait = 2 ** attempt
+                        print(f"[VLMClient] Rate limited. Waiting {wait}s before retry {attempt+1}/3...")
+                        time.sleep(wait)
+                        continue
+                    raise Exception(last_error)
 
-            parsed = self._parse_json_response(raw_content)
-            if parsed is None:
-                raise Exception(f"JSON parse failed. Raw response: {raw_content[:500]}")
+                result = response.json()
+                raw_content = result['choices'][0]['message']['content']
 
-            # 응답 형식 처리
-            if isinstance(parsed, dict) and 'subtitles' in parsed:
-                subtitles = parsed['subtitles']
-            elif isinstance(parsed, list):
-                subtitles = parsed
-            else:
-                raise Exception(f"Unexpected format. Got: {type(parsed).__name__}. Raw: {raw_content[:500]}")
+                parsed = self._parse_json_response(raw_content)
+                if parsed is None:
+                    raise Exception(f"JSON parse failed. Raw response: {raw_content[:500]}")
 
-            if not isinstance(subtitles, list):
-                raise Exception(f"Subtitles is not a list. Got: {type(subtitles).__name__}. Raw: {raw_content[:500]}")
-
-            # frame_index -> timestamp 변환
-            results: List[Dict] = []
-            for i, sub in enumerate(subtitles):
-                frame_idx = sub.get('frame_index', i)
-                if 0 <= frame_idx < len(frame_batch):
-                    item = frame_batch[frame_idx]
-                    start_t = item["timestamp"]
-                    pos = sub.get('position')
-                    if not pos and "bbox" in item:
-                        pos = _bbox_to_position(
-                            item["bbox"], item.get("orig_w", 1920), item.get("orig_h", 1080)
-                        )
+                break  # 성공
+            except Exception as e:
+                last_error = str(e)
+                if attempt < 2:
+                    wait = 2 ** attempt
+                    print(f"[VLMClient] Batch failed, retrying in {wait}s... ({attempt+1}/3)")
+                    time.sleep(wait)
                 else:
-                    start_t = frame_batch[0]["timestamp"] if frame_batch else 0.0
-                    pos = sub.get('position', 'bottom-center')
+                    raise Exception(f"VLM Processing Error: {last_error}") from e
 
-                # end 계산: 다음 자막 직전 또는 기본 1.0초
-                if i + 1 < len(subtitles):
-                    next_idx = subtitles[i + 1].get('frame_index', frame_idx + 1)
-                    if 0 <= next_idx < len(frame_batch):
-                        end_t = frame_batch[next_idx]["timestamp"] - 0.05
-                    else:
-                        end_t = start_t + 1.0
+        # 응답 형식 처리
+        if isinstance(parsed, dict) and 'subtitles' in parsed:
+            subtitles = parsed['subtitles']
+        elif isinstance(parsed, list):
+            subtitles = parsed
+        else:
+            raise Exception(f"Unexpected format. Got: {type(parsed).__name__}. Raw: {raw_content[:500]}")
+
+        if not isinstance(subtitles, list):
+            raise Exception(f"Subtitles is not a list. Got: {type(subtitles).__name__}. Raw: {raw_content[:500]}")
+
+        # frame_index -> timestamp 변환
+        results: List[Dict] = []
+        for i, sub in enumerate(subtitles):
+            frame_idx = sub.get('frame_index', i)
+            if 0 <= frame_idx < len(frame_batch):
+                item = frame_batch[frame_idx]
+                start_t = item["timestamp"]
+                pos = sub.get('position')
+                if not pos and "bbox" in item:
+                    pos = _bbox_to_position(
+                        item["bbox"], item.get("orig_w", 1920), item.get("orig_h", 1080)
+                    )
+            else:
+                start_t = frame_batch[0]["timestamp"] if frame_batch else 0.0
+                pos = sub.get('position', 'bottom-center')
+
+            # end 계산
+            if i + 1 < len(subtitles):
+                next_idx = subtitles[i + 1].get('frame_index', frame_idx + 1)
+                if 0 <= next_idx < len(frame_batch):
+                    end_t = frame_batch[next_idx]["timestamp"] - 0.05
                 else:
                     end_t = start_t + 1.0
+            else:
+                end_t = start_t + 1.0
 
-                # 짧은 대사 (효과음/신음)는 최대 0.8초로 제한
-                text_len = len(sub.get('translated', ''))
-                if text_len <= 3 and (end_t - start_t) > 0.8:
-                    end_t = start_t + 0.8
+            text_len = len(sub.get('translated', ''))
+            if text_len <= 3 and (end_t - start_t) > 0.8:
+                end_t = start_t + 0.8
+            if end_t <= start_t:
+                end_t = start_t + 0.5
+            if (end_t - start_t) > 3.0:
+                end_t = start_t + 3.0
 
-                # 최소/최대 지속시간 보장
-                if end_t <= start_t:
-                    end_t = start_t + 0.5
-                if (end_t - start_t) > 3.0:
-                    end_t = start_t + 3.0
+            results.append({
+                "start": start_t,
+                "end": end_t,
+                "original": sub.get('original', ''),
+                "translated": sub.get('translated', ''),
+                "color": sub.get('color', '#FFFFFF'),
+                "position": pos or 'bottom-center'
+            })
 
-                results.append({
-                    "start": start_t,
-                    "end": end_t,
-                    "original": sub.get('original', ''),
-                    "translated": sub.get('translated', ''),
-                    "color": sub.get('color', '#FFFFFF'),
-                    "position": pos or 'bottom-center'
-                })
-
-            return results
-        except Exception as e:
-            raise Exception(f"VLM Processing Error: {str(e)}") from e
+        return results
