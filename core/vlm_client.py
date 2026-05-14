@@ -12,9 +12,10 @@ class VLMClient:
     OpenAI 호환 멀티이미지 VLM 클라이언트.
     자막 프레임 배치를 전송하여 번역/색상/위치를 추출.
     """
-    def __init__(self, api_key: str, model_name: str, base_url: str):
+    def __init__(self, api_key: str, model_name: str, base_url: str, backup_model: str = None):
         self.api_key = api_key
         self.model_name = model_name
+        self.backup_model = backup_model
         self.base_url = base_url.rstrip('/')
         if not self.base_url.endswith('/v1'):
             self.base_url += '/v1'
@@ -274,13 +275,19 @@ class VLMClient:
             "Authorization": f"Bearer {self.api_key}"
         }
 
-        # Retry: 실패 시 최대 10회 재시도 (delay 3s > 6s > 12s > 24s > 48s > 96s > 96s...)
+        # Backup model 지원 + delay cap 12초
+        model_name = self.model_name
         last_error = None
         parsed = None
         raw_content = ""
         for attempt in range(10):
+            # 3회 이상 실패 시 backup model로 전환
+            if attempt >= 3 and self.backup_model and model_name == self.model_name:
+                model_name = self.backup_model
+                print(f"[VLMClient] Primary model failed. Switching to backup: {model_name}")
             try:
-                print(f"[VLMClient] API call attempt {attempt+1}/10...")
+                payload["model"] = model_name
+                print(f"[VLMClient] API call attempt {attempt+1}/10 (model={model_name})...")
                 response = requests.post(
                     f"{self.base_url}/chat/completions",
                     headers=headers, json=payload, timeout=300
@@ -297,7 +304,7 @@ class VLMClient:
                     if status != 429 and 400 <= status < 500:
                         break
                     if attempt < 9:
-                        wait = min(3 * (2 ** attempt), 96)
+                        wait = min(3 * (2 ** (attempt % 3)), 12)
                         print(f"[VLMClient] Retrying in {wait}s...")
                         time.sleep(wait)
                     continue
@@ -309,20 +316,20 @@ class VLMClient:
                 print(f"[VLMClient] Content len={len(raw_content)}, preview=[{raw_content[:100]}]")
 
                 if not raw_content.strip():
-                    last_error = f"Empty content (attempt {attempt+1}/10). API returned HTTP 200 with empty message."
+                    last_error = f"Empty content ({model_name}, attempt {(attempt%3)+1}/3). API returned HTTP 200 with empty message."
                     print(f"[VLMClient] {last_error}")
                     if attempt < 9:
-                        wait = min(3 * (2 ** attempt), 96)
+                        wait = min(3 * (2 ** (attempt % 3)), 12)
                         print(f"[VLMClient] Retrying in {wait}s...")
                         time.sleep(wait)
                     continue
 
                 parsed = self._parse_json_response(raw_content)
                 if parsed is None:
-                    last_error = f"JSON parse failed (attempt {attempt+1}/10). First 500 chars: {raw_content[:500]}"
+                    last_error = f"JSON parse failed ({model_name}, attempt {(attempt%3)+1}/3). First 500 chars: {raw_content[:500]}"
                     print(f"[VLMClient] {last_error}")
                     if attempt < 9:
-                        wait = min(3 * (2 ** attempt), 96)
+                        wait = min(3 * (2 ** (attempt % 3)), 12)
                         print(f"[VLMClient] Retrying in {wait}s...")
                         time.sleep(wait)
                     continue
@@ -332,7 +339,7 @@ class VLMClient:
                     last_error = f"Unexpected format. Got: {type(parsed).__name__}. Raw: {raw_content[:500]}"
                     print(f"[VLMClient] {last_error}")
                     if attempt < 9:
-                        wait = min(3 * (2 ** attempt), 96)
+                        wait = min(3 * (2 ** (attempt % 3)), 12)
                         print(f"[VLMClient] Retrying in {wait}s...")
                         time.sleep(wait)
                     continue
@@ -341,9 +348,9 @@ class VLMClient:
 
             except Exception as e:
                 last_error = str(e)
-                print(f"[VLMClient] Exception on attempt {attempt+1}/10: {last_error}")
+                print(f"[VLMClient] Exception on attempt {attempt+1}/10 ({model_name}): {last_error}")
                 if attempt < 9:
-                    wait = min(3 * (2 ** attempt), 96)
+                    wait = min(3 * (2 ** (attempt % 3)), 12)
                     print(f"[VLMClient] Retrying in {wait}s...")
                     time.sleep(wait)
                 continue

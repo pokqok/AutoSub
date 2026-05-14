@@ -66,7 +66,7 @@ class AnalysisWorker(QThread):
                 self.error.emit("API Key is missing!")
                 return
 
-            client = VLMClient(api_key, model_name, base_url)
+            client = VLMClient(api_key, model_name, base_url, backup_model=self.settings.get('backup_model_name'))
             self.log.emit("Pre-flight API connection test...")
             self._check_cancel()
             try:
@@ -302,6 +302,13 @@ class SubtitleVLMApp(QMainWindow):
         self.model_input.setPlaceholderText("e.g., gemini-3-flash-preview:cloud, gemma3:cloud")
         model_layout.addWidget(self.model_input)
         settings_group.addLayout(model_layout)
+
+        backup_model_layout = QHBoxLayout()
+        backup_model_layout.addWidget(QLabel("Backup Model:"))
+        self.backup_model_input = QLineEdit(self.settings.get('backup_model_name', ''))
+        self.backup_model_input.setPlaceholderText("e.g., gemma4:31b-cloud (fallback on censorship)")
+        backup_model_layout.addWidget(self.backup_model_input)
+        settings_group.addLayout(backup_model_layout)
 
         settings_group.addWidget(QLabel("Custom Prompt (Bypass/Style):"))
         self.prompt_input = QTextEdit()
@@ -541,6 +548,7 @@ class SubtitleVLMApp(QMainWindow):
         presets[name] = {
             "base_url": self.url_input.text(),
             "model_name": self.model_input.text(),
+            "backup_model_name": self.backup_model_input.text(),
             "custom_prompt": self.prompt_input.toPlainText(),
             "ocr_engine": self.ocr_engine_combo.currentText(),
             "ocr_interval": float(self.interval_combo.currentText()),
@@ -563,6 +571,8 @@ class SubtitleVLMApp(QMainWindow):
             self.url_input.setText(p["base_url"])
         if p.get("model_name"):
             self.model_input.setText(p["model_name"])
+        if p.get("backup_model_name") is not None:
+            self.backup_model_input.setText(p["backup_model_name"])
         if p.get("custom_prompt") is not None:
             self.prompt_input.setPlainText(p["custom_prompt"])
         if p.get("ocr_engine"):
@@ -600,6 +610,7 @@ class SubtitleVLMApp(QMainWindow):
         self.settings = {
             "api_key": self.key_input.text(),
             "model_name": self.model_input.text(),
+            "backup_model_name": self.backup_model_input.text(),
             "base_url": self.url_input.text(),
             "custom_prompt": self.prompt_input.toPlainText(),
             "glossary": glossary,
