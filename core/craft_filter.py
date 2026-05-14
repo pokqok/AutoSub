@@ -304,9 +304,17 @@ class CRAFTFrameFilter:
                 next_idx += 1
                 continue
 
-            # 풀 프레임 저장
+            # ROI 크롭 후 저장 (배경 노이즈 제거, SyncRefiner 정밀 비교용)
+            if target_bbox:
+                x1, y1, x2, y2 = target_bbox
+                x1, y1 = max(0, x1), max(0, y1)
+                x2, y2 = min(frame.shape[1], x2), min(frame.shape[0], y2)
+                roi_frame = frame[y1:y2, x1:x2]
+            else:
+                roi_frame = frame
+
             filepath = os.path.join(output_folder, f"dense_{int(target_t * 1000):08d}.jpg")
-            cv2.imwrite(filepath, frame, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+            cv2.imwrite(filepath, roi_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
 
             dense_frames.append({
                 "timestamp": target_t,
