@@ -52,7 +52,7 @@ class SyncRefiner:
             e2 = cv2.Canny(g2, 50, 150)
             ec1 = np.count_nonzero(e1)
             ec2 = np.count_nonzero(e2)
-            if ec1 < 30 or ec2 < 30:
+            if ec1 < 10 or ec2 < 10:
                 edge_sim = 0.0
             else:
                 inter = np.count_nonzero(np.logical_and(e1, e2))
@@ -186,7 +186,9 @@ class SyncRefiner:
             position = sub.get("position")
             original_start = sub["start"]
             original_end = sub["end"]
-            bbox = sub.get("bbox")
+            # VLM 결과에 bbox 없으면 nearest frame의 bbox 사용
+            nearest = self._get_nearest_frame(original_start, frame_list)
+            bbox = sub.get("bbox") or (nearest.get("bbox") if nearest else None)
             next_start = subtitles[i + 1]["start"] if i + 1 < len(subtitles) else float('inf')
 
             # ref_roi를 original_start에서 한 번만 추출 (핵심 수정)
