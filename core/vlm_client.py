@@ -105,6 +105,69 @@ class VLMClient:
         except Exception as e:
             raise Exception(f"API Connection Test Failed: {str(e)}") from e
 
+    def post_review(self, all_subtitles: List[Dict], custom_prompt: str = "") -> List[Dict]:
+        """
+        완성된 전체 자막 목록을 LLM에 보내 최종 검수를 수행합니다.
+        중복 병합, 시간 교정, 톤 통일을 처리합니다.
+        """
+        if not all_subtitles or len(all_subtitles) < 2:
+            return all_subtitles
+
+        # JSON 문자열로 직렬화 (길이 제한: 최근 80개)
+        review_target = all_subtitles[-80:] if len(all_subtitles) > 80 else all_subtitles
+        subs_json = json.dumps(review_target, ensure_ascii=False, indent=1)
+
+        prompt_lines = [
+            "You are a senior subtitle QC (Quality Control) editor.",
+            "Your job is to review a COMPLETED subtitle list and fix ONLY clear errors.",
+            "",
+            "Review rules:",
+            "1. MERGE DUPLICATES: If the SAME line appears twice with overlapping times, merge into one with the combined time range.",
+            "2. FIX OVERLAPS: If subtitle A ends AFTER subtitle B starts, shorten A so it ends exactly when B starts (no forced gap needed, just prevent collision).",
+            "3. STREAMING MERGE: If consecutive subtitles are fragments of the SAME sentence building up (e.g. '아..' / '아..앗' / '아..앗..앙'), merge them into ONE entry with the complete text.",
+            "4. TONE CHECK: Ensure the same character speaks with consistent register/politeness across all lines.",
+            "5. PRESERVE: Do NOT re-translate or change correct lines. Only fix obvious errors.",
+            "6. RETURN FORMAT: Return the exact same JSON array structure. No markdown, no explanation.",
+        ]
+        if custom_prompt:
+            prompt_lines.append(f"\nUser instructions:\n{custom_prompt}")
+
+        prompt_text = "\n".join(prompt_lines) + f"\n\nSubtitles to review:\n{subs_json}"
+
+        payload = {
+            "model": self.model_name,
+            "messages": [{"role": "user", "content": prompt_text}],
+            "temperature": 0.0,
+            "max_tokens": 8000
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}"
+        }
+
+        try:
+            response = requests.post(
+                f"{self.base_url}/chat/completions",
+                headers=headers, json=payload, timeout=300
+            )
+            if response.status_code != 200:
+                print(f"[VLMClient] Post-review HTTP {response.status_code}: {response.text[:500]}")
+                return all_subtitles
+
+            raw_content = response.json()['choices'][0]['message'].get('content', '')
+            parsed = self._parse_json_response(raw_content)
+            if parsed is None:
+                print(f"[VLMClient] Post-review parse failed, keeping original.")
+                return all_subtitles
+
+            if isinstance(parsed, list) and len(parsed) > 0:
+                print(f"[VLMClient] Post-review applied: {len(all_subtitles)} -> {len(parsed)} subtitles")
+                return parsed
+            return all_subtitles
+        except Exception as e:
+            print(f"[VLMClient] Post-review error: {e}, keeping original.")
+            return all_subtitles
+
     def _encode_image(self, filepath: str) -> str:
         if not os.path.exists(filepath):
             raise FileNotFoundError(f"Frame file not found: {filepath}")

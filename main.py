@@ -189,6 +189,21 @@ class AnalysisWorker(QThread):
 
                     self.progress.emit(95, 100, "Exporting subtitles...")
 
+                    # Phase 4: Post-review (최종 검수)
+                    self._check_cancel()
+                    self.progress.emit(0, 100, "Phase 4/4: Final review...")
+                    self.log.emit("  Phase 4/4: Post-review (QC)...")
+                    try:
+                        reviewed_results = client.post_review(final_results, custom_prompt=custom_prompt)
+                        if len(reviewed_results) != len(final_results):
+                            self.log.emit(f"  -> Post-review merged/cleaned subtitles: {len(final_results)} -> {len(reviewed_results)}")
+                        final_results = reviewed_results
+                        self.log.emit("  -> Post-review complete.")
+                        self.progress.emit(100, 100, "Phase 4/4: Done")
+                    except Exception as e:
+                        self.log.emit(f"  -> WARNING: Post-review failed, keeping Phase 3 result: {str(e)}")
+                        self.progress.emit(100, 100, "Phase 4/4: Skipped")
+
                     # Save
                     self._check_cancel()
                     self.progress.emit(0, 100, "Exporting subtitles...")
