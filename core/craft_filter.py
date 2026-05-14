@@ -86,13 +86,21 @@ class CRAFTFrameFilter:
         if boxes is None or len(boxes) == 0:
             return False, None
 
-        # 모든 박스를 감싸는 최소 사각형
+        # 모든 박스를 감싸는 최소 사각형 (640x360 기준)
         all_pts = np.array(boxes).reshape(-1, 2)
         x1, y1 = int(all_pts[:, 0].min()), int(all_pts[:, 1].min())
         x2, y2 = int(all_pts[:, 0].max()), int(all_pts[:, 1].max())
 
-        # 패딩 추가
+        # 640x360 좌표를 원본 frame 해상도로 변환
         h, w = frame.shape[:2]
+        fx = w / 640.0
+        fy = h / 360.0
+        x1 = int(x1 * fx)
+        y1 = int(y1 * fy)
+        x2 = int(x2 * fx)
+        y2 = int(y2 * fy)
+
+        # 패딩 추가 (원본 frame 해상도 기준)
         pad = 10
         x1 = max(0, x1 - pad)
         y1 = max(0, y1 - pad)
@@ -268,23 +276,9 @@ class CRAFTFrameFilter:
                     t += step_sec
                     continue
 
-                # ROI crop (marker의 bbox 사용)
-                if bbox:
-                    x1, y1, x2, y2 = bbox
-                    x1 = max(0, int(x1))
-                    y1 = max(0, int(y1))
-                    x2 = min(orig_w, int(x2))
-                    y2 = min(orig_h, int(y2))
-                    if x2 <= x1 or y2 <= y1:
-                        t += step_sec
-                        continue
-                    roi_frame = frame[y1:y2, x1:x2]
-                else:
-                    roi_frame = frame
-
-                ts_ms = int(t * 1000)
-                filepath = os.path.join(output_folder, f"dense_{ts_ms:08d}.jpg")
-                cv2.imwrite(filepath, roi_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                # 풀 프레임 저장 (Phase 3에서 다시 ROI 크롭할 수 있도록)
+                filepath = os.path.join(output_folder, f"dense_{int(t * 1000):08d}.jpg")
+                cv2.imwrite(filepath, frame, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
 
                 dense_frames.append({
                     "timestamp": t,
