@@ -23,8 +23,12 @@ class SubtitleFrameFilter:
         logging.getLogger('ppocr').setLevel(logging.WARNING)
         logging.getLogger('paddle').setLevel(logging.WARNING)
         from paddleocr import PaddleOCR
-        # rec=False: 텍스트 인식 OFF, 감지만
-        self.ocr = PaddleOCR(use_angle_cls=False, lang='japan', rec=False)
+        try:
+            # 빠른 버전: 인식 없이 감지만 (지원하는 버전)
+            self.ocr = PaddleOCR(use_angle_cls=False, lang='japan', rec=False)
+        except (ValueError, TypeError):
+            # 지원하지 않는 버전: 전체 OCR로 대체 (느리지만 동작)
+            self.ocr = PaddleOCR(use_angle_cls=False, lang='japan')
 
     def _log(self, msg: str):
         if self.log_callback:
