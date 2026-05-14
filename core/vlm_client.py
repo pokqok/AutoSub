@@ -70,6 +70,8 @@ class VLMClient:
             raise Exception(f"API Connection Test Failed: {str(e)}") from e
 
     def _encode_image(self, filepath: str) -> str:
+        if not os.path.exists(filepath):
+            raise FileNotFoundError(f"Frame file not found: {filepath}")
         with open(filepath, 'rb') as f:
             return base64.b64encode(f.read()).decode('utf-8')
 

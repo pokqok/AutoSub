@@ -142,30 +142,36 @@ class SubtitleFrameFilter:
 
                     # 4K 리사이즈
                     h, w = frame.shape[:2]
+                    scale = 1.0
                     max_w = 1920
                     if w > max_w:
                         scale = max_w / w
                         new_w = int(w * scale)
                         new_h = int(h * scale)
                         frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
-                        orig_w, orig_h = new_w, new_h
 
                     try:
                         ocr_res = self.ocr.ocr(frame)
-                        boxes = self._extract_boxes(ocr_res)
-                        box_count = len(boxes)
+                        raw_boxes = self._extract_boxes(ocr_res)
+                        box_count = len(raw_boxes)
                     except Exception as e:
                         self._log(f"  [Filter Error frame {frame_idx}] {str(e)}")
-                        boxes = []
+                        raw_boxes = []
                         box_count = 0
 
                     if box_count >= self.min_boxes:
-                        roi, bbox = self._get_subtitle_roi(frame, boxes)
+                        roi, resized_bbox = self._get_subtitle_roi(frame, raw_boxes)
 
                         # 중복 체크
                         if prev_roi is not None and self._is_similar_roi(prev_roi, roi, self.dup_threshold):
                             dup_count += 1
                             continue
+
+                        # bbox를 원본 해상도 기준으로 역변환
+                        if scale != 1.0:
+                            orig_bbox = tuple(int(v / scale) for v in resized_bbox)
+                        else:
+                            orig_bbox = resized_bbox
 
                         # 저장
                         filename = f"frame_{curr_t:.3f}.jpg"
@@ -175,7 +181,7 @@ class SubtitleFrameFilter:
                         filtered.append({
                             "timestamp": curr_t,
                             "filepath": filepath,
-                            "bbox": bbox,
+                            "bbox": orig_bbox,
                             "orig_w": orig_w,
                             "orig_h": orig_h
                         })
