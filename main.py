@@ -79,18 +79,21 @@ class AnalysisWorker(QThread):
                     )
 
                     def filter_progress(curr, total):
-                        self.progress.emit(curr, total, f"Filtering {os.path.basename(video_path)}...")
+                        pct = int(curr / total * 35)
+                        self.progress.emit(pct, 100, f"Phase 1/3: Filtering {os.path.basename(video_path)}...")
 
                     subtitle_frames = frame_filter.filter_frames(
                         video_path, temp_dir, progress_callback=filter_progress
                     )
                     self.log.emit(f"  -> {len(subtitle_frames)} subtitle frames detected")
+                    self.progress.emit(35, 100, f"Phase 1/3: Done ({len(subtitle_frames)} frames)")
 
                     if not subtitle_frames:
                         self.log.emit(f"  -> WARNING: No subtitle frames detected in {os.path.basename(video_path)}.")
                         continue
 
                     # Phase 2: VLM 배치 분석
+                    self.progress.emit(35, 100, f"Phase 2/3: VLM analysis...")
                     self.log.emit(f"  Phase 2/3: VLM batch analysis with '{model_name}'...")
                     BATCH_SIZE = 10
                     all_results = []
@@ -104,7 +107,7 @@ class AnalysisWorker(QThread):
                         try:
                             results = client.analyze_batch(
                                 batch, custom_prompt=custom_prompt,
-                                previous_subtitles=all_results[-3:]  # 이전 결과 3개만 전달 (토큰 초과 방지)
+                                previous_subtitles=all_results[-3:]
                             )
                             all_results.extend(results)
                             self.log.emit(f"  -> Extracted {len(results)} subtitles from batch {batch_num}")
@@ -112,12 +115,16 @@ class AnalysisWorker(QThread):
                             self.log.emit(f"  -> VLM batch {batch_num} failed: {str(e)}")
                             continue
 
+                        pct = 35 + int((batch_num / total_batches) * 45)
+                        self.progress.emit(pct, 100, f"Phase 2/3: Batch {batch_num}/{total_batches}")
+
                     self.log.emit(f"  -> VLM total: {len(all_results)} subtitles extracted")
                     if not all_results:
                         self.log.emit(f"  -> WARNING: VLM returned no subtitles for {os.path.basename(video_path)}.")
                         continue
 
                     # Phase 3: 세부 싱크 보정
+                    self.progress.emit(80, 100, "Phase 3/3: Sync refinement...")
                     self.log.emit("  Phase 3/3: Fine-tuning subtitle sync (0.1s precision)...")
                     try:
                         refiner = SyncRefiner()
@@ -126,6 +133,8 @@ class AnalysisWorker(QThread):
                     except Exception as e:
                         self.log.emit(f"  -> WARNING: Sync refinement failed, using VLM timing: {str(e)}")
                         final_results = all_results
+
+                    self.progress.emit(95, 100, "Exporting subtitles...")
 
                     # Save
                     if self.output_format == "SRT":
