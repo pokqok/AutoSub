@@ -1,8 +1,25 @@
-from craft_text_detector import Craft
 import cv2
 import numpy as np
 import os
 from typing import List, Dict, Tuple, Callable, Optional
+
+# ── torchvision >= 0.13 호환 패치 ──
+# craft-text-detector가 구버전 torchvision의 model_urls를 기대하지만
+# torchvision 0.13+ 에서는 삭제됨. 누락된 속성을 주입.
+import torchvision.models.vgg as _vgg_mod
+if not hasattr(_vgg_mod, 'model_urls'):
+    _vgg_mod.model_urls = {
+        'vgg11': 'https://download.pytorch.org/models/vgg11-bbd30ac9.pth',
+        'vgg13': 'https://download.pytorch.org/models/vgg13-c768596a.pth',
+        'vgg16': 'https://download.pytorch.org/models/vgg16-397923af.pth',
+        'vgg19': 'https://download.pytorch.org/models/vgg19-dcbb9e9d.pth',
+        'vgg11_bn': 'https://download.pytorch.org/models/vgg11_bn-6002323d.pth',
+        'vgg13_bn': 'https://download.pytorch.org/models/vgg13_bn-abd245e5.pth',
+        'vgg16_bn': 'https://download.pytorch.org/models/vgg16_bn-6c64b313.pth',
+        'vgg19_bn': 'https://download.pytorch.org/models/vgg19_bn-c79401a0.pth',
+    }
+
+from craft_text_detector import Craft
 
 
 class CRAFTFrameFilter:
