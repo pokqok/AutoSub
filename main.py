@@ -34,6 +34,26 @@ class AnalysisWorker(QThread):
         self.video_list = video_list
         self.settings = settings
         self.output_format = output_format
+        self._cancel = False  # 작업 취소 플래그
+
+    def cancel(self):
+        """작업 취소 요청"""
+        self._cancel = True
+        self.log.emit("Cancellation requested. Stopping after current step...")
+
+    def _check_cancel(self, msg="Operation cancelled by user."):
+        """취소 플래그 확인. 취소됐으면 예외 발생"""
+        if self._cancel:
+            raise InterruptedError(msg)
+
+    def _cleanup_temp_dir(self, temp_dir: str):
+        """영상별 임시 폴더 정리"""
+        if temp_dir and os.path.exists(temp_dir):
+            try:
+                shutil.rmtree(temp_dir)
+                print(f"[Cleanup] Removed {temp_dir}")
+            except Exception as e:
+                print(f"[Cleanup] Failed to remove {temp_dir}: {e}")
 
     def run(self):
         try:
@@ -48,6 +68,7 @@ class AnalysisWorker(QThread):
 
             client = VLMClient(api_key, model_name, base_url)
             self.log.emit("Pre-flight API connection test...")
+            self._check_cancel()
             try:
                 _ = client.test_connection()
                 self.log.emit("  -> API connection verified.")
@@ -62,6 +83,7 @@ class AnalysisWorker(QThread):
             last_results = []
 
             for idx, video_path in enumerate(self.video_list):
+                self._check_cancel()
                 self.log.emit(f"[{idx+1}/{total_videos}] Processing: {os.path.basename(video_path)}")
 
                 ext = ".srt" if self.output_format == "SRT" else ".ass"
@@ -73,6 +95,7 @@ class AnalysisWorker(QThread):
 
                 try:
                     # Phase 1: CRAFT Detection 필터
+                    self._check_cancel()
                     self.log.emit("  Phase 1/3: CRAFT text detection filter...")
                     frame_filter = CRAFTFrameFilter(
                         interval_sec=1.0,
@@ -94,6 +117,7 @@ class AnalysisWorker(QThread):
                         continue
 
                     # Dense frames for Phase 3 sync refinement
+                    self._check_cancel()
                     self.log.emit("  -> Extracting dense frames (±2.5s @ 0.1s) for sync refinement...")
                     dense_frames = frame_filter.extract_dense_frames(
                         video_path, subtitle_frames, temp_dir
@@ -104,6 +128,7 @@ class AnalysisWorker(QThread):
                     all_frames_for_sync.sort(key=lambda x: x["timestamp"])
 
                     # Phase 2: VLM 배치 분석
+                    self._check_cancel()
                     self.progress.emit(35, 100, f"Phase 2/3: VLM analysis...")
                     self.log.emit(f"  Phase 2/3: VLM batch analysis with '{model_name}'...")
                     BATCH_SIZE = 10
@@ -111,6 +136,7 @@ class AnalysisWorker(QThread):
                     total_batches = (len(subtitle_frames) + BATCH_SIZE - 1) // BATCH_SIZE
 
                     for b_idx in range(0, len(subtitle_frames), BATCH_SIZE):
+                        self._check_cancel()
                         batch = subtitle_frames[b_idx:b_idx + BATCH_SIZE]
                         batch_num = b_idx // BATCH_SIZE + 1
                         self.log.emit(f"  -> Batch {batch_num}/{total_batches} ({len(batch)} frames)")
@@ -139,6 +165,7 @@ class AnalysisWorker(QThread):
                         continue
 
                     # Phase 3: 세부 싱크 보정
+                    self._check_cancel()
                     self.progress.emit(80, 100, "Phase 3/3: Sync refinement...")
                     self.log.emit("  Phase 3/3: Fine-tuning subtitle sync (0.1s precision)...")
                     try:
@@ -152,6 +179,8 @@ class AnalysisWorker(QThread):
                     self.progress.emit(95, 100, "Exporting subtitles...")
 
                     # Save
+                    self._check_cancel()
+                    self.progress.emit(95, 100, "Exporting subtitles...")
                     if self.output_format == "SRT":
                         exporter.generate_srt(final_results, subtitle_path)
                     else:
@@ -163,14 +192,13 @@ class AnalysisWorker(QThread):
 
                 finally:
                     # temp 폴더 정리
-                    if os.path.exists(temp_dir):
-                        try:
-                            shutil.rmtree(temp_dir)
-                        except Exception as e:
-                            self.log.emit(f"  -> Warning: Failed to clean temp dir: {str(e)}")
+                    self._cleanup_temp_dir(temp_dir)
 
             self.finished.emit(processed_count, last_results)
 
+        except InterruptedError as e:
+            self.log.emit(f"\n⚠️ Operation cancelled: {e}")
+            self.finished.emit(processed_count if 'processed_count' in dir() else 0, [])
         except Exception as e:
             self.error.emit(f"Critical Error: {str(e)}\n{traceback.format_exc()}")
 
@@ -190,6 +218,19 @@ class SubtitleVLMApp(QMainWindow):
 
     def closeEvent(self, event):
         self.save_settings()
+        # 잔여 temp 폴더들 정리
+        cleaned = 0
+        for i in range(self.video_list_widget.count()):
+            vp = self.video_list_widget.item(i).text()
+            temp_dir = os.path.join(os.path.dirname(vp), ".autosub_temp")
+            if os.path.exists(temp_dir):
+                try:
+                    shutil.rmtree(temp_dir)
+                    cleaned += 1
+                except Exception as e:
+                    print(f"[Close] Failed to clean temp dir: {e}")
+        if cleaned:
+            print(f"[Close] Cleaned up {cleaned} temp directories")
         if getattr(self, 'log_file', None):
             self.log_file.close()
         event.accept()
@@ -305,11 +346,21 @@ class SubtitleVLMApp(QMainWindow):
         btn_test_api.clicked.connect(self.test_api_connection)
         left_panel.addWidget(btn_test_api)
 
+        btn_layout = QHBoxLayout()
         self.start_btn = QPushButton("Start Analysis")
         self.start_btn.setMinimumHeight(50)
         self.start_btn.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold;")
         self.start_btn.clicked.connect(self.start_process)
-        left_panel.addWidget(self.start_btn)
+        btn_layout.addWidget(self.start_btn, 3)
+        
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setMinimumHeight(50)
+        self.cancel_btn.setStyleSheet("background-color: #c62828; color: white; font-weight: bold;")
+        self.cancel_btn.clicked.connect(self.cancel_process)
+        self.cancel_btn.setEnabled(False)
+        btn_layout.addWidget(self.cancel_btn, 1)
+        
+        left_panel.addLayout(btn_layout)
 
         main_layout.addLayout(left_panel, 1)
 
@@ -610,6 +661,39 @@ class SubtitleVLMApp(QMainWindow):
         self.worker.finished.connect(self.process_finished)
         self.worker.error.connect(self.process_error)
         self.worker.start()
+        self.cancel_btn.setEnabled(True)
+
+    def cancel_process(self):
+        """작업 취소: 확인창 → 취소 요청 → 임시 폴더 정리"""
+        reply = QMessageBox.question(
+            self,
+            "Cancel Analysis",
+            "Are you sure you want to cancel the current analysis?\n\n"
+            "Temporary cache files will be cleaned up.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if reply == QMessageBox.No:
+            return
+        if hasattr(self, 'worker') and self.worker and self.worker.isRunning():
+            self.worker.cancel()
+            self.cancel_btn.setEnabled(False)
+            self.add_log("Cancellation requested. Waiting for current step to complete...")
+            # 30초까지 대기 후 강제 종료
+            self.worker.wait(30000)
+            # 잔여 temp 정리 (동일 디렉토리 기준)
+            for i in range(self.video_list_widget.count()):
+                vp = self.video_list_widget.item(i).text()
+                temp_dir = os.path.join(os.path.dirname(vp), ".autosub_temp")
+                if os.path.exists(temp_dir):
+                    try:
+                        shutil.rmtree(temp_dir)
+                        self.add_log(f"Cleaned up temp: {os.path.basename(temp_dir)}")
+                    except Exception as e:
+                        self.add_log(f"Failed to clean temp: {e}")
+            self.start_btn.setEnabled(True)
+            self.cancel_btn.setEnabled(False)
+            self.status_label.setText("Cancelled. Ready.")
 
     def update_progress(self, curr, total, text):
         self.progress_bar.setMaximum(total)
@@ -624,6 +708,7 @@ class SubtitleVLMApp(QMainWindow):
 
     def process_finished(self, count, results):
         self.start_btn.setEnabled(True)
+        self.cancel_btn.setEnabled(False)
         self.status_label.setText(f"Ready. Processed {count} files.")
         self.add_log(f"\n✅ Task completed. {count} files processed.")
         
@@ -679,6 +764,7 @@ class SubtitleVLMApp(QMainWindow):
 
     def process_error(self, error_msg):
         self.start_btn.setEnabled(True)
+        self.cancel_btn.setEnabled(False)
         self.status_label.setText("Error")
         self.add_log(f"\n❌ Critical Error: {error_msg}")
         
