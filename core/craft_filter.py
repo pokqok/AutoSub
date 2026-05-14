@@ -319,9 +319,9 @@ class CRAFTFrameFilter:
             dense_frames.append({
                 "timestamp": target_t,
                 "filepath": filepath,
-                "bbox": target_bbox,
-                "orig_w": orig_w,
-                "orig_h": orig_h
+                "bbox": (0, 0, roi_frame.shape[1], roi_frame.shape[0]),
+                "orig_w": roi_frame.shape[1],
+                "orig_h": roi_frame.shape[0]
             })
             count += 1
 
