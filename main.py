@@ -103,14 +103,15 @@ class AnalysisWorker(QThread):
                     )
 
                     def filter_progress(curr, total):
-                        pct = int(curr / total * 35)
-                        self.progress.emit(pct, 100, f"Phase 1/3: Filtering {os.path.basename(video_path)}...")
+                        self._check_cancel()
+                        pct = int(curr / total * 90)
+                        self.progress.emit(pct, 100, f"Phase 1/3: CRAFT filtering {pct}%")
 
                     subtitle_frames = frame_filter.filter_frames(
                         video_path, temp_dir, progress_callback=filter_progress
                     )
                     self.log.emit(f"  -> {len(subtitle_frames)} subtitle frames detected")
-                    self.progress.emit(35, 100, f"Phase 1/3: Done ({len(subtitle_frames)} frames)")
+                    self.progress.emit(90, 100, f"Phase 1/3: Extracting dense frames...")
 
                     if not subtitle_frames:
                         self.log.emit(f"  -> WARNING: No subtitle frames detected in {os.path.basename(video_path)}.")
@@ -119,17 +120,23 @@ class AnalysisWorker(QThread):
                     # Dense frames for Phase 3 sync refinement
                     self._check_cancel()
                     self.log.emit("  -> Extracting dense frames (±2.5s @ 0.1s) for sync refinement...")
+                    
+                    def dense_progress(curr, total):
+                        self._check_cancel()
+                        pct = 90 + int(curr / total * 10)
+                        self.progress.emit(pct, 100, f"Phase 1/3: Dense frames {curr}/{total}")
+                    
                     dense_frames = frame_filter.extract_dense_frames(
-                        video_path, subtitle_frames, temp_dir
+                        video_path, subtitle_frames, temp_dir, progress_callback=dense_progress
                     )
                     self.log.emit(f"  -> Dense frames: {len(dense_frames)}")
-                    # 1초 프레임 + dense 프레임을 합쳐서 SyncRefiner에 전달
+                    self.progress.emit(100, 100, f"Phase 1/3: Done ({len(subtitle_frames)} frames, {len(dense_frames)} dense)")
                     all_frames_for_sync = subtitle_frames + dense_frames
                     all_frames_for_sync.sort(key=lambda x: x["timestamp"])
 
                     # Phase 2: VLM 배치 분석
                     self._check_cancel()
-                    self.progress.emit(35, 100, f"Phase 2/3: VLM analysis...")
+                    self.progress.emit(0, 100, f"Phase 2/3: VLM batch analysis...")
                     self.log.emit(f"  Phase 2/3: VLM batch analysis with '{model_name}'...")
                     BATCH_SIZE = 10
                     all_results = []
@@ -153,8 +160,8 @@ class AnalysisWorker(QThread):
                             time.sleep(10)  # Rate limit cooldown before next batch
                             continue
 
-                        pct = 35 + int((batch_num / total_batches) * 45)
-                        self.progress.emit(pct, 100, f"Phase 2/3: Batch {batch_num}/{total_batches}")
+                        pct = int(batch_num / total_batches * 100)
+                        self.progress.emit(pct, 100, f"Phase 2/3: Batch {batch_num}/{total_batches} ({pct}%)")
 
                         # Rate limit avoidance: wait between batches
                         time.sleep(2)
@@ -166,21 +173,23 @@ class AnalysisWorker(QThread):
 
                     # Phase 3: 세부 싱크 보정
                     self._check_cancel()
-                    self.progress.emit(80, 100, "Phase 3/3: Sync refinement...")
+                    self.progress.emit(0, 100, "Phase 3/3: Sync refinement...")
                     self.log.emit("  Phase 3/3: Fine-tuning subtitle sync (0.1s precision)...")
                     try:
                         refiner = SyncRefiner()
                         final_results = refiner.refine(video_path, all_results, all_frames_for_sync)
                         self.log.emit("  -> Sync refinement complete.")
+                        self.progress.emit(100, 100, "Phase 3/3: Done")
                     except Exception as e:
                         self.log.emit(f"  -> WARNING: Sync refinement failed, using VLM timing: {str(e)}")
                         final_results = all_results
+                        self.progress.emit(100, 100, "Phase 3/3: Done (fallback)")
 
                     self.progress.emit(95, 100, "Exporting subtitles...")
 
                     # Save
                     self._check_cancel()
-                    self.progress.emit(95, 100, "Exporting subtitles...")
+                    self.progress.emit(0, 100, "Exporting subtitles...")
                     if self.output_format == "SRT":
                         exporter.generate_srt(final_results, subtitle_path)
                     else:

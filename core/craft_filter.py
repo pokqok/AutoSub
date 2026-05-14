@@ -235,7 +235,8 @@ class CRAFTFrameFilter:
     def extract_dense_frames(self, video_path: str, markers: List[Dict],
                              output_folder: str,
                              window_sec: float = 2.5,
-                             step_sec: float = 0.1) -> List[Dict]:
+                             step_sec: float = 0.1,
+                             progress_callback=None) -> List[Dict]:
         """
         각 마커 기준 ±window_sec 범위를 step_sec 단위로 추가 샘플링합니다.
         Phase 3(SyncRefiner)에서 이진 탐색할 때 사용됩니다.
@@ -256,11 +257,14 @@ class CRAFTFrameFilter:
         seen_ts = set()
         count = 0
 
-        for marker in markers:
+        for m_idx, marker in enumerate(markers):
             center = float(marker.get("timestamp", 0))
             bbox = marker.get("bbox")
             start_t = max(0.0, center - window_sec)
             end_t = min(duration, center + window_sec)
+
+            if progress_callback:
+                progress_callback(m_idx + 1, len(markers))
 
             t = start_t
             while t <= end_t:
