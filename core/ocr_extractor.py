@@ -8,7 +8,7 @@ class OCRExtractor:
     """
     PaddleOCR 기반 영상 자막 추출 클래스.
     """
-    def __init__(self, interval_sec: float = 0.3, similarity_threshold: float = 0.6,
+    def __init__(self, interval_sec: float = 1.0, similarity_threshold: float = 0.6,
                  conf_threshold: float = 0.4, log_callback: Optional[Callable] = None):
         self.interval_sec = interval_sec
         self.similarity_threshold = similarity_threshold
@@ -251,11 +251,11 @@ class OCRExtractor:
                     new_h = int(h * scale)
                     processed = cv2.resize(processed, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-                # 원본 BGR 프레임을 그대로 PaddleOCR에 넘김 (grayscale 변환 내부에서 처리)
-                # 또는 내부에서 처리하도록 원본 그대로
+                # CLAHE 전처리 적용: grayscale -> BGR 변환 후 PaddleOCR에 전달
+                processed_bgr = cv2.cvtColor(processed, cv2.COLOR_GRAY2BGR)
                 try:
                     import traceback
-                    ocr_res = self.ocr.ocr(frame)
+                    ocr_res = self.ocr.ocr(processed_bgr)
                     if first_frame_debug and ocr_res is not None:
                         # 첫 프레임의 OCR raw 결과 형식을 상세 로깅 (원인 파악용)
                         sample = str(ocr_res)[:1000]

@@ -105,9 +105,11 @@ class SyncRefiner:
         if not diffs:
             return center_sec
 
-        # backward: 텍스트가 등장하는 지점 = diff가 급증하는 지점 (텍스트 등장)
-        # forward: 텍스트가 사라지는 지점 = diff가 급증하는 지점 (텍스트 사라짐)
-        # → 둘 다 diff spike를 찾되, 방향에 따라 선택
+        max_diff = max(diffs)
+        if max_diff < self.diff_threshold:
+            # 의미 있는 변화가 없음: 보정 불필요
+            return center_sec
+
         max_idx = int(np.argmax(diffs))
 
         if direction == "backward":
@@ -136,30 +138,15 @@ class SyncRefiner:
             original_start = sub["start"]
             original_end = sub["end"]
 
-            # 첫/마지막 자막은 보수적으로 처리
-            is_first = (i == 0)
-            is_last = (i == len(subtitles) - 1)
-
             # start 보정
-            if is_first:
-                # 첫 자막은 backward 탐색 제한 (영상 시작 이전 없음)
-                refined_start = self._find_change_point(
-                    cap, fps, original_start, "backward", position
-                )
-            else:
-                refined_start = self._find_change_point(
-                    cap, fps, original_start, "backward", position
-                )
+            refined_start = self._find_change_point(
+                cap, fps, original_start, "backward", position
+            )
 
             # end 보정
-            if is_last:
-                refined_end = self._find_change_point(
-                    cap, fps, original_end, "forward", position
-                )
-            else:
-                refined_end = self._find_change_point(
-                    cap, fps, original_end, "forward", position
-                )
+            refined_end = self._find_change_point(
+                cap, fps, original_end, "forward", position
+            )
 
             # 안전 검사: end < start 방지
             if refined_end < refined_start:
