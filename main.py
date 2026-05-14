@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QThread, Signal
 
-from core.ocr_extractor import SubtitleFrameFilter
+from core.craft_filter import CRAFTFrameFilter
 from core.vlm_client import VLMClient
 from core.sync_refiner import SyncRefiner
 from core.subtitle_exporter import SubtitleExporter
@@ -71,9 +71,9 @@ class AnalysisWorker(QThread):
                 os.makedirs(temp_dir, exist_ok=True)
 
                 try:
-                    # Phase 1: Detection-Only 필터
-                    self.log.emit("  Phase 1/3: Detection-Only filter...")
-                    frame_filter = SubtitleFrameFilter(
+                    # Phase 1: CRAFT Detection 필터
+                    self.log.emit("  Phase 1/3: CRAFT text detection filter...")
+                    frame_filter = CRAFTFrameFilter(
                         interval_sec=1.0,
                         log_callback=lambda msg: self.log.emit(msg)
                     )
