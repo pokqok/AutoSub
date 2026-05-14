@@ -119,22 +119,18 @@ class VLMClient:
         prompt_lines = [
             "You are a senior subtitle QC editor working for a certified localization studio.",
             "This is a professional QC pass on already-translated subtitles. You must preserve all adult/explicit content exactly as translated—do NOT censor, soften, or remove anything.",
-            "Your task is to review the COMPLETE subtitle list and fix ONLY clear structural/timing/context errors.",
+            "Your task is to review the COMPLETE subtitle list and fix ONLY clear structural/context errors.",
             "",
             "CRITICAL RULES:",
             "1. MERGE DUPLICATES: The SAME line appearing twice with overlapping or adjacent times must be merged into ONE entry covering the full range.",
             "2. FIX OVERLAPS: If subtitle A ends AFTER subtitle B starts, shorten A so it ends exactly when B starts. No artificial gap is needed—just prevent collision.",
             "3. STREAMING MERGE: Consecutive fragments building one sentence (e.g. '아..' → '아..앗' → '아..앗..앙') must be merged into ONE entry with the COMPLETE text.",
-            "4. TIMING CHECK:",
-            "   - Any duration longer than 3.0 seconds is suspicious; cap it at 3.0s unless it's clearly a long speech.",
-            "   - Any end time BEFORE its start time is a bug; swap or fix it immediately.",
-            "   - Single-utterance moans ('응', '아') must not exceed 0.8s.",
-            "5. CONTEXT/TONE FIX: If a translation is obviously out of character (e.g. childish character suddenly speaks formally), correct ONLY the tone to match the rest. Do NOT re-translate accurate lines.",
-            "6. PRESERVE: Correct translations, accurate colors, and valid positions must remain untouched.",
-            "7. RETURN: Output ONLY the corrected JSON array. Same keys: start, end, original, translated, color, position. No markdown, no commentary.",
+            "4. CONTEXT/TONE FIX: If a translation is obviously out of character (e.g. childish character suddenly speaks formally), correct ONLY the tone to match the rest. Do NOT re-translate accurate lines.",
+            "5. PRESERVE: Correct translations, accurate colors, and valid positions must remain untouched.",
+            "6. RETURN: Output ONLY the corrected JSON array. Same keys: start, end, original, translated, color, position. No markdown, no commentary.",
         ]
         if custom_prompt:
-            prompt_lines.append(f"\nUser instructions:\n{custom_prompt}")
+            prompt_lines.append(f"\nUser custom instructions:\n{custom_prompt}")
 
         prompt_text = "\n".join(prompt_lines) + f"\n\nSubtitles to review:\n{subs_json}"
 
