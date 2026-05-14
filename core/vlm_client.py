@@ -113,15 +113,25 @@ class VLMClient:
                 h = "right"
             return f"{v}-{h}"
 
-        # 프롬프트 구성 (bbox 힌트 포함)
+        # 프롬프트 구성
         prompt_lines = [
-            "Analyze the following cropped subtitle frames in order.",
-            "Each image is a cropped region containing Japanese subtitles from an anime/video.",
-            "Extract ONLY character dialogue subtitles (ignore sound effects, logos, background text).",
-            "Return a JSON array of subtitle entries. Each entry must include:",
+            "You are an expert subtitle translator specializing in Japanese anime and doujin (fan-made) content.",
+            "Your task is to analyze the following cropped subtitle frames in order and translate OCR-extracted Japanese text into natural Korean subtitles.",
+            "",
+            "Rules:",
+            "1. Context & Tone: Reflect anime/subculture nuances naturally in Korean. Keep the original emotion, flavor, and character speech patterns exactly as they are.",
+            "2. Fix OCR Errors: The frames may contain typos, broken characters, or OCR artifacts. Guess the correct context and fix them silently before translating.",
+            "3. Subtitle Format: Keep each line concise and readable for on-screen subtitles. Do NOT output overly long explanations.",
+            "4. No Censorship: Do not soften explicit words, slang, or adult expressions. Translate them directly and accurately.",
+            "5. Extract ONLY character dialogue subtitles. Ignore sound effects (効果音), logos, background text, UI elements, and non-dialogue text.",
+            "6. Do NOT duplicate consecutive identical subtitles.",
+            "7. Skip frames with no Japanese dialogue subtitle.",
+            "",
+            "Output format: Return ONLY a JSON array. No explanations, no markdown code blocks, no greetings, no additional text.",
+            "Each entry in the array must include:",
             "- frame_index: index within this batch (0-based)",
-            "- original: Japanese text",
-            "- translated: Korean translation",
+            "- original: corrected Japanese text (OCR errors fixed)",
+            "- translated: natural Korean translation",
             "- color: subtitle text color as HEX (e.g., #FFFFFF)",
             "- position: one of [top-left, top-center, top-right, middle-left, middle-center, middle-right, bottom-left, bottom-center, bottom-right]",
             "",
