@@ -70,6 +70,18 @@ class SyncRefiner:
         except Exception:
             return 0.0
 
+    @staticmethod
+    def _has_subtitle(roi) -> bool:
+        """ROI에 자막 텍스트가 남아있는지 edge 개수로 빠르게 판정. 배경만 남았으면 False."""
+        if roi is None or roi.size == 0:
+            return False
+        try:
+            g = cv2.cvtColor(cv2.resize(roi, (64, 64)), cv2.COLOR_BGR2GRAY)
+            edges = cv2.Canny(g, 50, 150)
+            return np.count_nonzero(edges) >= 10
+        except Exception:
+            return True
+
     def _get_nearest_frame(self, t: float, frame_list: List[Dict], max_gap: float = 1.0) -> Optional[Dict]:
         """
         시간 t에 가장 가까운 저장된 프레임을 반환.
@@ -106,6 +118,9 @@ class SyncRefiner:
         current_roi = self._get_subtitle_roi_at(t, position, bbox, frame_list)
         if current_roi is None or current_roi.size == 0:
             return False
+        # C. 자막 없음 빠른 판정: 현재 ROI에 edge가 거의 없으면 자막이 사라진 것
+        if not self._has_subtitle(current_roi):
+            return False
         sim = self._roi_similarity(current_roi, ref_roi)
         return sim >= threshold
 
@@ -127,6 +142,41 @@ class SyncRefiner:
                     hi = mid
         return hi if direction == "appear" else lo
 
+    def _verify_boundary(self, boundary: float, direction: str, ref_roi, position, bbox,
+                         frame_list: List[Dict]) -> float:
+        """
+        B. 경계 ±0.1s 프레임 추가 검증.
+        불일치 시 0.1s씩 보정 재시도 (최대 3회).
+        """
+        min_t = min(f["timestamp"] for f in frame_list) if frame_list else 0.0
+        max_t = max(f["timestamp"] for f in frame_list) if frame_list else boundary
+
+        for _ in range(3):
+            before = self._is_same_subtitle(boundary - 0.1, ref_roi, position, bbox, frame_list)
+            after  = self._is_same_subtitle(boundary + 0.1, ref_roi, position, bbox, frame_list)
+
+            if direction == "appear":
+                # before = 없음(False), after = 있음(True) 가 정상
+                if (not before) and after:
+                    return boundary
+                if before and after:
+                    boundary = max(min_t, boundary - 0.1)   # 너무 뒤 → 앞으로
+                elif (not before) and (not after):
+                    boundary = min(max_t, boundary + 0.1)   # 너무 앞 → 뒤로
+                else:
+                    break  # before=T, after=F ?  역전된 경우 → 그냥 반환
+            else:  # disappear
+                # before = 있음(True), after = 없음(False) 가 정상
+                if before and (not after):
+                    return boundary
+                if before and after:
+                    boundary = min(max_t, boundary + 0.1)   # 너무 앞 → 뒤로
+                elif (not before) and (not after):
+                    boundary = max(min_t, boundary - 0.1)   # 너무 뒤 → 앞으로
+                else:
+                    break  # before=F, after=T ?  역전된 경우 → 그냥 반환
+        return boundary
+
     def _find_appearance(self, marker_start: float, position=None, bbox=None,
                          frame_list: List[Dict] = None,
                          ref_roi=None) -> float:
@@ -145,7 +195,10 @@ class SyncRefiner:
         while self._is_same_subtitle(lo, ref_roi, position, bbox, frame_list) and lo > min_t:
             lo = max(min_t, lo - 0.5)
 
-        return self._binary_search_edge(ref_roi, position, bbox, lo, hi, "appear", frame_list)
+        return self._verify_boundary(
+            self._binary_search_edge(ref_roi, position, bbox, lo, hi, "appear", frame_list),
+            "appear", ref_roi, position, bbox, frame_list
+        )
 
     def _find_disappearance(self, marker_end: float, next_start: float,
                             position=None, bbox=None,
@@ -168,7 +221,10 @@ class SyncRefiner:
                and hi < search_limit - 0.1):
             hi = min(hi + 0.5, search_limit, max_t)
 
-        return self._binary_search_edge(ref_roi, position, bbox, lo, hi, "disappear", frame_list)
+        return self._verify_boundary(
+            self._binary_search_edge(ref_roi, position, bbox, lo, hi, "disappear", frame_list),
+            "disappear", ref_roi, position, bbox, frame_list
+        )
 
     def refine(self, video_path: str, subtitles: List[Dict],
                frame_list: List[Dict] = None) -> List[Dict]:

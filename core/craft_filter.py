@@ -111,7 +111,7 @@ class CRAFTFrameFilter:
 
     @staticmethod
     def _is_new_subtitle(roi: np.ndarray, prev_roi: Optional[np.ndarray],
-                         threshold: float = 0.05) -> bool:
+                         threshold: float = 0.03) -> bool:
         """픽셀 diff 기반 — 같은 위치 다른 텍스트도 구분 가능"""
         if prev_roi is None or roi is None or roi.size == 0 or prev_roi.size == 0:
             return True
