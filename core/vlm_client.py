@@ -389,8 +389,6 @@ class VLMClient:
                 end_t = start_t + 0.8
             if end_t <= start_t:
                 end_t = start_t + 0.5
-            if (end_t - start_t) > 3.0:
-                end_t = start_t + 3.0
 
             results.append({
                 "start": start_t,

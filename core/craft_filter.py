@@ -35,7 +35,7 @@ class CRAFTFrameFilter:
     PaddleOCR과 달리 문자 모양 heatmap을 사용하여
     색상/방향/위치에 무관하게 텍스트 영역을 감지합니다.
     """
-    def __init__(self, text_threshold: float = 0.3,
+    def __init__(self, text_threshold: float = 0.2,
                  link_threshold: float = 0.2,
                  low_text: float = 0.4,
                  interval_sec: float = 1.0,
@@ -111,25 +111,18 @@ class CRAFTFrameFilter:
 
     @staticmethod
     def _is_new_subtitle(roi: np.ndarray, prev_roi: Optional[np.ndarray],
-                         threshold: float = 0.95) -> bool:
-        """이전 ROI와 다르면 True (새 자막)"""
-        if prev_roi is None or prev_roi.size == 0:
+                         threshold: float = 0.05) -> bool:
+        """픽셀 diff 기반 — 같은 위치 다른 텍스트도 구분 가능"""
+        if prev_roi is None or roi is None or roi.size == 0 or prev_roi.size == 0:
             return True
-        if roi.size == 0:
-            return False
         try:
             r1 = cv2.resize(roi, (64, 64))
             r2 = cv2.resize(prev_roi, (64, 64))
-            g1 = cv2.cvtColor(r1, cv2.COLOR_BGR2GRAY)
-            g2 = cv2.cvtColor(r2, cv2.COLOR_BGR2GRAY)
-            h1 = cv2.calcHist([g1], [0], None, [64], [0, 256])
-            h2 = cv2.calcHist([g2], [0], None, [64], [0, 256])
-            cv2.normalize(h1, h1)
-            cv2.normalize(h2, h2)
-            similarity = cv2.compareHist(h1, h2, cv2.HISTCMP_CORREL)
-            return similarity < threshold  # 다르면 새 자막
+            diff = cv2.absdiff(r1, r2)
+            change_ratio = np.count_nonzero(diff > 10) / diff.size
+            return change_ratio > threshold
         except Exception:
-            return True  # 비교 실패시 안전하게 새 자막으로 처리
+            return True
 
     def filter_frames(self, video_path: str, output_folder: str,
                       progress_callback=None) -> List[Dict]:
@@ -198,7 +191,7 @@ class CRAFTFrameFilter:
                 roi = frame[y1:y2, x1:x2]
 
                 # 중복 제거
-                if not self._is_new_subtitle(roi, prev_roi_img, self.dup_threshold):
+                if not self._is_new_subtitle(roi, prev_roi_img):
                     dup_count += 1
                     continue
 

@@ -128,12 +128,13 @@ class SyncRefiner:
         return hi if direction == "appear" else lo
 
     def _find_appearance(self, marker_start: float, position=None, bbox=None,
-                         frame_list: List[Dict] = None) -> float:
+                         frame_list: List[Dict] = None,
+                         ref_roi=None) -> float:
         """기본 marker_start 앞 1초에서 시작. SAME이면 0.5초씩 더 앞으로 확장."""
         if not frame_list:
             return marker_start
-
-        ref_roi = self._get_subtitle_roi_at(marker_start, position, bbox, frame_list)
+        if ref_roi is None:
+            ref_roi = self._get_subtitle_roi_at(marker_start, position, bbox, frame_list)
         if ref_roi is None:
             return marker_start
 
@@ -141,34 +142,31 @@ class SyncRefiner:
         lo = max(min_t, marker_start - 1.0)
         hi = marker_start
 
-        extend = 0
-        while self._is_same_subtitle(lo, ref_roi, position, bbox, frame_list) and extend < 3:
+        while self._is_same_subtitle(lo, ref_roi, position, bbox, frame_list) and lo > min_t:
             lo = max(min_t, lo - 0.5)
-            extend += 1
 
         return self._binary_search_edge(ref_roi, position, bbox, lo, hi, "appear", frame_list)
 
     def _find_disappearance(self, marker_end: float, next_start: float,
                             position=None, bbox=None,
-                            frame_list: List[Dict] = None) -> float:
+                            frame_list: List[Dict] = None,
+                            ref_roi=None) -> float:
         """기본 marker_end 뒤 1초에서 시작. SAME이면 0.5초씩 더 뒤로 확장."""
         if not frame_list:
             return marker_end
-
-        ref_roi = self._get_subtitle_roi_at(marker_end, position, bbox, frame_list)
+        if ref_roi is None:
+            ref_roi = self._get_subtitle_roi_at(marker_end, position, bbox, frame_list)
         if ref_roi is None:
             return marker_end
 
         max_t = max(f["timestamp"] for f in frame_list)
         lo = marker_end
-        search_limit = next_start if next_start != float('inf') else marker_end + 1.0
+        search_limit = next_start if next_start != float('inf') else marker_end + 5.0
         hi = min(search_limit, marker_end + 1.0, max_t)
 
-        extend = 0
         while (self._is_same_subtitle(hi, ref_roi, position, bbox, frame_list)
-               and extend < 3 and hi < search_limit - 0.1):
+               and hi < search_limit - 0.1):
             hi = min(hi + 0.5, search_limit, max_t)
-            extend += 1
 
         return self._binary_search_edge(ref_roi, position, bbox, lo, hi, "disappear", frame_list)
 
@@ -191,15 +189,21 @@ class SyncRefiner:
             bbox = sub.get("bbox")
             next_start = subtitles[i + 1]["start"] if i + 1 < len(subtitles) else float('inf')
 
-            # 등장 지점
+            # ref_roi를 original_start에서 한 번만 추출 (핵심 수정)
+            ref_roi = self._get_subtitle_roi_at(original_start, position, bbox, frame_list)
+            if ref_roi is None or ref_roi.size == 0:
+                refined.append(sub)
+                continue
+
+            # 등장 지점 (ref_roi 전달)
             refined_start = self._find_appearance(
-                original_start, position, bbox, frame_list
+                original_start, position, bbox, frame_list, ref_roi
             )
 
-            # 사라짐 지점
+            # 사라짐 지점 (ref_roi 전달)
             disappear_search_start = max(original_start + 0.3, refined_start + 0.2)
             refined_end = self._find_disappearance(
-                disappear_search_start, next_start, position, bbox, frame_list
+                disappear_search_start, next_start, position, bbox, frame_list, ref_roi
             )
 
             # 다음 자막과 겹치지 않도록 clamp
