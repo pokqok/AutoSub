@@ -66,7 +66,14 @@ class CRAFTFrameFilter:
         # BGR → RGB
         rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
 
-        prediction_result = self.craft.detect_text(rgb)
+        try:
+            prediction_result = self.craft.detect_text(rgb)
+        except ValueError:
+            # craft-text-detector 내부에서 inhomogeneous array 버그 발생 시 무시
+            return False, None
+
+        if not isinstance(prediction_result, dict):
+            return False, None
         boxes = prediction_result.get("boxes")
 
         if boxes is None or len(boxes) == 0:
