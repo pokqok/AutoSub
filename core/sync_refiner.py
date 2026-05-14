@@ -29,7 +29,7 @@ class SyncRefiner:
         self.diff_threshold = diff_threshold
 
     @staticmethod
-    def _get_roi_coords(frame_shape: Tuple[int, int, ...],
+    def _get_roi_coords(frame_shape: Tuple[int, ...],
                         position: Optional[str]) -> Tuple[int, int, int, int]:
         h, w = frame_shape[:2]
         roi = POSITION_ROI.get(position, DEFAULT_ROI)
