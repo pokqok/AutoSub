@@ -51,17 +51,17 @@ class SyncRefiner:
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY) if len(roi.shape) == 3 else roi
         return gray
 
-    def _find_change_point(self, cap: cv2.VideoCapture,
-                           fps: float,
-                           center_sec: float,
-                           direction: str,
+    def _binary_search_edge(self, cap: cv2.VideoCapture,
                            position=None,
                            bbox=None,
-                           forced_end_t: float = None):
+                           lo: float = 0.0,
+                           hi: float = 10.0,
+                           direction: str = "appear",  # "appear" or "disappear"
+                           min_resolution: float = 0.1) -> float:
         """
-        center_sec 주변에서 ROI diff가 가장 큰 지점을 찾습니다.
-        direction: forward=end 보정(텍스트 사라짐 지점), backward=start 보정(텍스트 등장 지점)
-        forced_end_t: forward 방향에서 검색 끝 경계를 외부에서 지정 (다음 자막 시작 전)
+        이진 탐색으로 자막 등장/사라짐 경계를 0.1초까지 좁혀 찾습니다.
+        direction="appear":  lo(없음) --- hi(있음)  경계 찾기
+        direction="disappear": lo(있음) --- hi(없음)  경계 찾기
         """
         frame_shape = (
             int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
@@ -69,69 +69,93 @@ class SyncRefiner:
         )
         coords = self._get_roi_coords(frame_shape, position, bbox)
 
-        # 탐색 범위
-        if direction == "backward":
-            start_t = max(0.0, center_sec - self.scan_radius_sec)
-            end_t = center_sec + self.scan_radius_sec / 2
-        else:  # forward
-            start_t = center_sec
-            if forced_end_t is not None:
-                end_t = forced_end_t
-            else:
-                end_t = center_sec + self.scan_radius_sec
+        # ROI가 비어있으면 그대로 반환
+        x1, y1, x2, y2 = coords
+        if x2 <= x1 or y2 <= y1:
+            return lo if direction == "appear" else hi
 
-        # 0.1초 간격으로 프레임 추출
-        scan_times = np.arange(start_t, end_t, self.scan_interval_sec)
-        if len(scan_times) < 2:
-            return center_sec
-
-        frames_gray = []
-        valid_times = []
-        for t in scan_times:
+        def _has_text_at(t: float) -> bool:
             cap.set(cv2.CAP_PROP_POS_MSEC, int(t * 1000))
             ret, frame = cap.read()
             if not ret:
-                continue
+                return False
             gray = self._extract_roi_gray(frame, coords)
-            frames_gray.append(gray)
-            valid_times.append(t)
+            if gray.size == 0:
+                return False
+            # 텍스트 존재 여부: 평균 밝기가 어두운 편이면 텍스트 있음으로 간주
+            mean_val = float(np.mean(gray))
+            return mean_val < 200  # 임계값: 밝으면 배경, 어두우면 텍스트
 
-        if len(frames_gray) < 2:
-            return center_sec
+        # 이진 탐색
+        while (hi - lo) > min_resolution:
+            mid = (lo + hi) / 2
+            has_text = _has_text_at(mid)
 
-        # diff 계산: 연속된 프레임들의 차이
-        diffs = []
-        for i in range(len(frames_gray) - 1):
-            if frames_gray[i].shape != frames_gray[i+1].shape:
-                h, w = frames_gray[i].shape
-                next_resized = cv2.resize(frames_gray[i+1], (w, h))
-            else:
-                next_resized = frames_gray[i+1]
-            diff = cv2.absdiff(frames_gray[i], next_resized)
-            mean_diff = float(np.mean(diff))
-            diffs.append(mean_diff)
+            if direction == "appear":
+                # lo = 없음, hi = 있음
+                if has_text:
+                    hi = mid
+                else:
+                    lo = mid
+            else:  # disappear
+                # lo = 있음, hi = 없음
+                if has_text:
+                    lo = mid
+                else:
+                    hi = mid
 
-        if not diffs:
-            return center_sec
+        return hi if direction == "appear" else lo
 
-        max_diff = max(diffs)
-        if max_diff < self.diff_threshold:
-            # 의미 있는 변화가 없음: 자막이 검색 구간 끝까지 남아있음
-            # → 구간 끝에서 사라진 것으로 처리
-            if direction == "forward" and valid_times:
-                return valid_times[-1]
-            return center_sec
+    def _find_appearance(self, cap: cv2.VideoCapture,
+                        marker_start: float,
+                        position=None,
+                        bbox=None) -> float:
+        """
+        marker_start 앞쪽 2초를 이진 탐색해서 자막 등장 지점을 0.1초까지 찾습니다.
+        """
+        lo = max(0.0, marker_start - 2.0)
+        hi = marker_start
+        # 먼저 lo에 텍스트가 없는지, hi에 있는지 확인
+        # 만약 lo에도 텍스트가 있으면 더 앞으로 확장
+        extend = 0
+        while self._has_text_at(cap, lo, position, bbox) and extend < 5:
+            lo = max(0.0, lo - 1.0)
+            extend += 1
+        return self._binary_search_edge(cap, position, bbox, lo, hi, "appear")
 
-        max_idx = int(np.argmax(diffs))
+    def _find_disappearance(self, cap: cv2.VideoCapture,
+                           marker_end: float,
+                           next_start: float,
+                           position=None,
+                           bbox=None) -> float:
+        """
+        marker_end 뒤쪽을 이진 탐색해서 자막 사라짐 지점을 0.1초까지 찾습니다.
+        다음 자막 시작 전까지만 검색.
+        """
+        lo = marker_end
+        hi = next_start - 0.05 if next_start != float('inf') else marker_end + 2.0
+        # 만약 hi에도 텍스트가 있으면 더 뒤로 확장
+        extend = 0
+        while self._has_text_at(cap, hi, position, bbox) and extend < 5:
+            hi = hi + 1.0
+            extend += 1
+        return self._binary_search_edge(cap, position, bbox, lo, hi, "disappear")
 
-        if direction == "backward":
-            # 텍스트 등장: diff spike 직후 시점
-            refined_t = valid_times[min(max_idx + 1, len(valid_times) - 1)]
-        else:
-            # 텍스트 사라짐: diff spike 지점이 end
-            refined_t = valid_times[max_idx]
-
-        return refined_t
+    def _has_text_at(self, cap, t, position, bbox) -> bool:
+        frame_shape = (
+            int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+            int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+        )
+        coords = self._get_roi_coords(frame_shape, position, bbox)
+        cap.set(cv2.CAP_PROP_POS_MSEC, int(t * 1000))
+        ret, frame = cap.read()
+        if not ret:
+            return False
+        gray = self._extract_roi_gray(frame, coords)
+        if gray.size == 0:
+            return False
+        mean_val = float(np.mean(gray))
+        return mean_val < 200
 
     def refine(self, video_path: str, subtitles: List[Dict]) -> List[Dict]:
         """
@@ -141,7 +165,6 @@ class SyncRefiner:
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             raise IOError(f"Could not open video: {video_path}")
-        fps = cap.get(cv2.CAP_PROP_FPS)
 
         refined: List[Dict] = []
         for i, sub in enumerate(subtitles):
@@ -149,24 +172,18 @@ class SyncRefiner:
             original_start = sub["start"]
             original_end = sub["end"]
             bbox = sub.get("bbox")
-
-            # 다음 자막 시작 시점 (없으면 무한대)
             next_start = subtitles[i + 1]["start"] if i + 1 < len(subtitles) else float('inf')
 
-            # start 보정: 등장 지점 탐색
-            refined_start = self._find_change_point(
-                cap, fps, original_start, "backward", position, bbox
+            # 등장 지점: original_start 앞쪽 2초를 이진 탐색
+            refined_start = self._find_appearance(
+                cap, original_start, position, bbox
             )
 
-            # end 보정: 사라짐 지점 탐색
-            # 최소 0.3초는 표시, 다음 자막 0.1초 전까지만 검색
-            search_limit = min(next_start - 0.1, original_start + 5.0)
-            if search_limit <= original_start + 0.3:
-                search_limit = original_start + 0.3
-
-            refined_end = self._find_change_point(
-                cap, fps, original_start + 0.3, "forward", position, bbox,
-                forced_end_t=search_limit
+            # 사라짐 지점: original_end 뒤쪽을 이진 탐색 (다음 자막 전까지)
+            # 사라짐 탐색 시작점: 최소 0.3초 후부터 (등장 직후 바로 사라지는 건 막기 위해)
+            disappear_search_start = max(original_start + 0.3, refined_start + 0.2)
+            refined_end = self._find_disappearance(
+                cap, disappear_search_start, next_start, position, bbox
             )
 
             # 다음 자막과 겹치지 않도록 clamp

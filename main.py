@@ -104,7 +104,7 @@ class AnalysisWorker(QThread):
                         try:
                             results = client.analyze_batch(
                                 batch, custom_prompt=custom_prompt,
-                                previous_subtitles=all_results[-10:]  # 이전 결과 10개 전달
+                                previous_subtitles=all_results[-3:]  # 이전 결과 3개만 전달 (토큰 초과 방지)
                             )
                             all_results.extend(results)
                             self.log.emit(f"  -> Extracted {len(results)} subtitles from batch {batch_num}")
