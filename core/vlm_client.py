@@ -194,7 +194,7 @@ class VLMClient:
             "model": self.model_name,
             "messages": [{"role": "user", "content": content}],
             "temperature": 0.0,
-            "max_tokens": 8000  # 긴 응답/잘리는 문제 방지
+            "max_tokens": 4000  # Ollama 호환성을 위해 4000으로 제한
         }
         headers = {
             "Content-Type": "application/json",
@@ -241,10 +241,20 @@ class VLMClient:
                     continue
 
                 result = response.json()
-                raw_content = result['choices'][0]['message']['content']
-                print(f"[VLMClient] Content len={len(raw_content)}")
+                raw_content = result['choices'][0]['message'].get('content')
+                if raw_content is None:
+                    raw_content = ""
+                print(f"[VLMClient] Content len={len(raw_content)}, preview=[{raw_content[:100]}]")
 
-                parsed = self._parse_json_response(raw_content)
+                # Content 비었을 때 retry
+                if not raw_content.strip():
+                    last_error = f"Empty content (attempt {attempt+1}/3). API returned HTTP 200 with empty message."
+                    print(f"[VLMClient] {last_error}")
+                    if attempt < 2:
+                        wait = 3 * (2 ** attempt)
+                        print(f"[VLMClient] Retrying in {wait}s...")
+                        time.sleep(wait)
+                    continue
                 if parsed is None:
                     last_error = f"JSON parse failed (attempt {attempt+1}/3). First 500 chars: {raw_content[:500]}"
                     print(f"[VLMClient] {last_error}")
