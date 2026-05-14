@@ -159,14 +159,14 @@ class AnalysisWorker(QThread):
                             self.log.emit(f"  -> Extracted {len(results)} subtitles from batch {batch_num}")
                         except Exception as e:
                             self.log.emit(f"  -> VLM batch {batch_num} failed: {str(e)}")
-                            time.sleep(10)  # Rate limit cooldown before next batch
+                            time.sleep(15)  # Rate limit cooldown before next batch
                             continue
 
                         pct = int(batch_num / total_batches * 100)
                         self.progress.emit(pct, 100, f"Phase 2/3: Batch {batch_num}/{total_batches} ({pct}%)")
 
                         # Rate limit avoidance: wait between batches
-                        time.sleep(2)
+                        time.sleep(3)
 
                     self.log.emit(f"  -> VLM total: {len(all_results)} subtitles extracted")
                     if not all_results:

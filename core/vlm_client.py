@@ -203,16 +203,16 @@ class VLMClient:
             "Authorization": f"Bearer {self.api_key}"
         }
 
-        # Retry: 실패 시 최대 3회 재시도 (delay 3s -> 6s)
+        # Retry: 실패 시 최대 5회 재시도 (delay 3s > 6s > 12s > 24s > 48s)        
         last_error = None
         parsed = None
         raw_content = ""
-        for attempt in range(3):
+        for attempt in range(5):
             try:
-                print(f"[VLMClient] API call attempt {attempt+1}/3...")
+                print(f"[VLMClient] API call attempt {attempt+1}/5...")
                 response = requests.post(
                     f"{self.base_url}/chat/completions",
-                    headers=headers, json=payload, timeout=180
+                    headers=headers, json=payload, timeout=300
                 )
                 status = response.status_code
                 body_len = len(response.text)
@@ -223,21 +223,10 @@ class VLMClient:
                     err_text = response.text[:500] if response.text else "(empty body)"
                     last_error = f"HTTP {status}: {err_text}"
                     print(f"[VLMClient] API error: {last_error}")
-                    # Non-retryable client errors (4xx except 429)
                     if status != 429 and 400 <= status < 500:
                         break
-                    if attempt < 2:
-                        wait = 3 * (2 ** attempt)  # 3s, 6s
-                        print(f"[VLMClient] Retrying in {wait}s...")
-                        time.sleep(wait)
-                    continue
-
-                # HTTP 200 but empty body
-                if not response.text or not response.text.strip():
-                    last_error = f"HTTP 200 but empty body (attempt {attempt+1}/3)"
-                    print(f"[VLMClient] {last_error}")
-                    if attempt < 2:
-                        wait = 3 * (2 ** attempt)
+                    if attempt < 4:
+                        wait = min(3 * (2 ** attempt), 96)
                         print(f"[VLMClient] Retrying in {wait}s...")
                         time.sleep(wait)
                     continue
@@ -248,20 +237,21 @@ class VLMClient:
                     raw_content = ""
                 print(f"[VLMClient] Content len={len(raw_content)}, preview=[{raw_content[:100]}]")
 
-                # Content 비었을 때 retry
                 if not raw_content.strip():
-                    last_error = f"Empty content (attempt {attempt+1}/3). API returned HTTP 200 with empty message."
+                    last_error = f"Empty content (attempt {attempt+1}/5). API returned HTTP 200 with empty message."
                     print(f"[VLMClient] {last_error}")
-                    if attempt < 2:
-                        wait = 3 * (2 ** attempt)
+                    if attempt < 4:
+                        wait = min(3 * (2 ** attempt), 96)
                         print(f"[VLMClient] Retrying in {wait}s...")
                         time.sleep(wait)
                     continue
+
+                parsed = self._parse_json_response(raw_content)
                 if parsed is None:
-                    last_error = f"JSON parse failed (attempt {attempt+1}/3). First 500 chars: {raw_content[:500]}"
+                    last_error = f"JSON parse failed (attempt {attempt+1}/5). First 500 chars: {raw_content[:500]}"
                     print(f"[VLMClient] {last_error}")
-                    if attempt < 2:
-                        wait = 3 * (2 ** attempt)
+                    if attempt < 4:
+                        wait = min(3 * (2 ** attempt), 96)
                         print(f"[VLMClient] Retrying in {wait}s...")
                         time.sleep(wait)
                     continue
@@ -270,9 +260,9 @@ class VLMClient:
 
             except Exception as e:
                 last_error = str(e)
-                print(f"[VLMClient] Exception on attempt {attempt+1}/3: {last_error}")
-                if attempt < 2:
-                    wait = 3 * (2 ** attempt)
+                print(f"[VLMClient] Exception on attempt {attempt+1}/5: {last_error}")
+                if attempt < 4:
+                    wait = min(3 * (2 ** attempt), 96)
                     print(f"[VLMClient] Retrying in {wait}s...")
                     time.sleep(wait)
                 continue
