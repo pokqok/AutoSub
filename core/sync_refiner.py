@@ -29,14 +29,19 @@ class SyncRefiner:
         self.diff_threshold = diff_threshold
 
     @staticmethod
-    def _get_roi_coords(frame_shape: Tuple[int, ...],
-                        position: Optional[str]) -> Tuple[int, int, int, int]:
-        h, w = frame_shape[:2]
+    def _get_roi_coords(frame_shape, position=None, bbox=None):
+        """
+        ROI 좌표 계산. bbox가 있으면 그대로 사용, 없으면 position 기반 추정.
+        """
+        img_h, img_w = frame_shape[:2]
+        if bbox is not None:
+            x1, y1, x2, y2 = bbox
+            return x1, y1, x2, y2
         roi = POSITION_ROI.get(position, DEFAULT_ROI)
-        x1 = int(w * roi[0])
-        y1 = int(h * roi[1])
-        x2 = int(w * roi[2])
-        y2 = int(h * roi[3])
+        x1 = int(img_w * roi[0])
+        y1 = int(img_h * roi[1])
+        x2 = int(img_w * roi[2])
+        y2 = int(img_h * roi[3])
         return x1, y1, x2, y2
 
     @staticmethod
@@ -49,8 +54,9 @@ class SyncRefiner:
     def _find_change_point(self, cap: cv2.VideoCapture,
                            fps: float,
                            center_sec: float,
-                           direction: str,  # "forward" or "backward"
-                           position: Optional[str]) -> float:
+                           direction: str,
+                           position=None,
+                           bbox=None):
         """
         center_sec 주변에서 ROI diff가 가장 큰 지점을 찾습니다.
         direction: forward=end 보정(텍스트 사라짐 지점), backward=start 보정(텍스트 등장 지점)
@@ -59,7 +65,7 @@ class SyncRefiner:
             int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
             int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
         )
-        coords = self._get_roi_coords(frame_shape, position)
+        coords = self._get_roi_coords(frame_shape, position, bbox)
 
         # 탐색 범위
         half_radius = self.scan_radius_sec / 2
@@ -137,15 +143,16 @@ class SyncRefiner:
             position = sub.get("position")
             original_start = sub["start"]
             original_end = sub["end"]
+            bbox = sub.get("bbox")
 
             # start 보정
             refined_start = self._find_change_point(
-                cap, fps, original_start, "backward", position
+                cap, fps, original_start, "backward", position, bbox
             )
 
             # end 보정
             refined_end = self._find_change_point(
-                cap, fps, original_end, "forward", position
+                cap, fps, original_end, "forward", position, bbox
             )
 
             # 안전 검사: end < start 방지
