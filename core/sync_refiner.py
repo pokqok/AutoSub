@@ -101,7 +101,7 @@ class SyncRefiner:
             return None
         return frame[y1:y2, x1:x2]
 
-    def _is_same_subtitle(self, t: float, ref_roi, position, bbox, frame_list: List[Dict], threshold=0.75) -> bool:
+    def _is_same_subtitle(self, t: float, ref_roi, position, bbox, frame_list: List[Dict], threshold=0.55) -> bool:
         """참조 ROI와 시간 t 근처 프레임의 ROI를 비교."""
         current_roi = self._get_subtitle_roi_at(t, position, bbox, frame_list)
         if current_roi is None or current_roi.size == 0:
@@ -161,7 +161,7 @@ class SyncRefiner:
 
         max_t = max(f["timestamp"] for f in frame_list)
         lo = marker_end
-        search_limit = next_start - 0.05 if next_start != float('inf') else marker_end + 1.0
+        search_limit = next_start if next_start != float('inf') else marker_end + 1.0
         hi = min(search_limit, marker_end + 1.0, max_t)
 
         extend = 0
@@ -203,8 +203,8 @@ class SyncRefiner:
             )
 
             # 다음 자막과 겹치지 않도록 clamp
-            if refined_end > next_start - 0.05:
-                refined_end = next_start - 0.05
+            if refined_end > next_start:
+                refined_end = next_start
 
             if refined_end <= refined_start:
                 refined_end = refined_start + 0.5
