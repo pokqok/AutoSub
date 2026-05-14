@@ -111,15 +111,15 @@ class SyncRefiner:
                         position=None,
                         bbox=None) -> float:
         """
-        marker_start 앞쪽 2초를 이진 탐색해서 자막 등장 지점을 0.1초까지 찾습니다.
+        기본 marker_start 앞 1초에서 시작.
+        텍스트가 있으면 0.5초씩 더 앞으로 확장 (최대 3번).
         """
-        lo = max(0.0, marker_start - 2.0)
+        lo = max(0.0, marker_start - 1.0)
         hi = marker_start
-        # 먼저 lo에 텍스트가 없는지, hi에 있는지 확인
-        # 만약 lo에도 텍스트가 있으면 더 앞으로 확장
+        # lo에 텍스트가 있으면 점진 확장
         extend = 0
-        while self._has_text_at(cap, lo, position, bbox) and extend < 5:
-            lo = max(0.0, lo - 1.0)
+        while self._has_text_at(cap, lo, position, bbox) and extend < 3:
+            lo = max(0.0, lo - 0.5)
             extend += 1
         return self._binary_search_edge(cap, position, bbox, lo, hi, "appear")
 
@@ -129,15 +129,17 @@ class SyncRefiner:
                            position=None,
                            bbox=None) -> float:
         """
-        marker_end 뒤쪽을 이진 탐색해서 자막 사라짐 지점을 0.1초까지 찾습니다.
-        다음 자막 시작 전까지만 검색.
+        기본 marker_end 뒤 1초에서 시작.
+        텍스트가 있으면 0.5초씩 더 뒤로 확장 (최대 3번).
         """
         lo = marker_end
-        hi = next_start - 0.05 if next_start != float('inf') else marker_end + 2.0
-        # 만약 hi에도 텍스트가 있으면 더 뒤로 확장
+        # 기본 사라짐 탐색 범위: marker_end + 1초 (다음 자막 전이면 더 짧게)
+        search_limit = next_start - 0.05 if next_start != float('inf') else marker_end + 1.0
+        hi = min(search_limit, marker_end + 1.0)
+        # hi에 텍스트가 있으면 점진 확장
         extend = 0
-        while self._has_text_at(cap, hi, position, bbox) and extend < 5:
-            hi = hi + 1.0
+        while self._has_text_at(cap, hi, position, bbox) and extend < 3 and hi < search_limit - 0.1:
+            hi = min(hi + 0.5, search_limit)
             extend += 1
         return self._binary_search_edge(cap, position, bbox, lo, hi, "disappear")
 
