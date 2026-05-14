@@ -19,8 +19,8 @@ DEFAULT_ROI = (0.0, 0.0, 1.0, 1.0)
 
 class SyncRefiner:
     """
-    LLM이 반환한 대략적 타이밍을 프레임 단위(0.05초)로 정밀 보정합니다.
-    position 필드 기반 ROI를 사용하여 배경 노이즈를 최소화합니다.
+    LLM이 반환한 대략적 타이밍을 이진 탐색으로 정밀 보정합니다.
+    참조 ROI를 기준으로 텍스트 내용까지 구분하여 경계를 찾습니다.
     """
     def __init__(self, scan_radius_sec: float = 0.5, scan_interval_sec: float = 0.1,
                  diff_threshold: float = 15.0):
@@ -51,113 +51,103 @@ class SyncRefiner:
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY) if len(roi.shape) == 3 else roi
         return gray
 
-    def _binary_search_edge(self, cap: cv2.VideoCapture,
-                           position=None,
-                           bbox=None,
-                           lo: float = 0.0,
-                           hi: float = 10.0,
-                           direction: str = "appear",  # "appear" or "disappear"
-                           min_resolution: float = 0.1) -> float:
-        """
-        이진 탐색으로 자막 등장/사라짐 경계를 0.1초까지 좁혀 찾습니다.
-        direction="appear":  lo(없음) --- hi(있음)  경계 찾기
-        direction="disappear": lo(있음) --- hi(없음)  경계 찾기
-        """
-        frame_shape = (
-            int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-            int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-        )
-        coords = self._get_roi_coords(frame_shape, position, bbox)
+    @staticmethod
+    def _roi_similarity(roi1, roi2) -> float:
+        """두 ROI의 히스토그램 상관관수를 반환 (0~1)"""
+        if roi1 is None or roi2 is None or roi1.size == 0 or roi2.size == 0:
+            return 0.0
+        try:
+            r1 = cv2.resize(roi1, (64, 64))
+            r2 = cv2.resize(roi2, (64, 64))
+            g1 = cv2.cvtColor(r1, cv2.COLOR_BGR2GRAY)
+            g2 = cv2.cvtColor(r2, cv2.COLOR_BGR2GRAY)
+            h1 = cv2.calcHist([g1], [0], None, [64], [0, 256])
+            h2 = cv2.calcHist([g2], [0], None, [64], [0, 256])
+            cv2.normalize(h1, h1)
+            cv2.normalize(h2, h2)
+            return cv2.compareHist(h1, h2, cv2.HISTCMP_CORREL)
+        except Exception:
+            return 0.0
 
-        # ROI가 비어있으면 그대로 반환
+    def _get_subtitle_roi_at(self, cap, t, position, bbox):
+        """특정 시간(t) 프레임에서 ROI를 추출합니다."""
+        cap.set(cv2.CAP_PROP_POS_MSEC, int(t * 1000))
+        ret, frame = cap.read()
+        if not ret:
+            return None
+        frame_shape = frame.shape[:2]
+        coords = self._get_roi_coords(frame_shape, position, bbox)
         x1, y1, x2, y2 = coords
         if x2 <= x1 or y2 <= y1:
-            return lo if direction == "appear" else hi
+            return None
+        return frame[y1:y2, x1:x2]
 
-        def _has_text_at(t: float) -> bool:
-            cap.set(cv2.CAP_PROP_POS_MSEC, int(t * 1000))
-            ret, frame = cap.read()
-            if not ret:
-                return False
-            gray = self._extract_roi_gray(frame, coords)
-            if gray.size == 0:
-                return False
-            # 텍스트 존재 여부: 평균 밝기가 어두운 편이면 텍스트 있음으로 간주
-            mean_val = float(np.mean(gray))
-            return mean_val < 200  # 임계값: 밝으면 배경, 어두우면 텍스트
+    def _is_same_subtitle(self, cap, t, ref_roi, position, bbox, threshold=0.75) -> bool:
+        """참조 ROI와 현재 시간 t의 ROI를 비교하여 같은 자막인지 판단합니다."""
+        current_roi = self._get_subtitle_roi_at(cap, t, position, bbox)
+        if current_roi is None or current_roi.size == 0:
+            return False
+        sim = self._roi_similarity(current_roi, ref_roi)
+        return sim >= threshold
 
-        # 이진 탐색
+    def _binary_search_edge(self, cap, ref_roi, position, bbox, lo, hi,
+                          direction: str, min_resolution: float = 0.1) -> float:
+        """
+        이진 탐색으로 자막 경계를 좁혀갑니다.
+        direction="appear": lo에 SAME이 없음(또는 DIFF), hi에 SAME이 있음
+        direction="disappear": lo에 SAME이 있음, hi에 SAME이 없음(또는 DIFF)
+        """
         while (hi - lo) > min_resolution:
             mid = (lo + hi) / 2
-            has_text = _has_text_at(mid)
-
+            is_same = self._is_same_subtitle(cap, mid, ref_roi, position, bbox)
             if direction == "appear":
-                # lo = 없음, hi = 있음
-                if has_text:
+                if is_same:
                     hi = mid
                 else:
                     lo = mid
             else:  # disappear
-                # lo = 있음, hi = 없음
-                if has_text:
+                if is_same:
                     lo = mid
                 else:
                     hi = mid
-
         return hi if direction == "appear" else lo
 
-    def _find_appearance(self, cap: cv2.VideoCapture,
-                        marker_start: float,
-                        position=None,
-                        bbox=None) -> float:
+    def _find_appearance(self, cap, marker_start, position=None, bbox=None) -> float:
         """
         기본 marker_start 앞 1초에서 시작.
-        텍스트가 있으면 0.5초씩 더 앞으로 확장 (최대 3번).
+        SAME이면 0.5초씩 더 앞으로 확장 (최대 3번).
         """
+        ref_roi = self._get_subtitle_roi_at(cap, marker_start, position, bbox)
+        if ref_roi is None:
+            return marker_start
         lo = max(0.0, marker_start - 1.0)
         hi = marker_start
-        # lo에 텍스트가 있으면 점진 확장
+        # lo에도 SAME이면 앞으로 확장
         extend = 0
-        while self._has_text_at(cap, lo, position, bbox) and extend < 3:
+        while self._is_same_subtitle(cap, lo, ref_roi, position, bbox) and extend < 3:
             lo = max(0.0, lo - 0.5)
             extend += 1
-        return self._binary_search_edge(cap, position, bbox, lo, hi, "appear")
+        return self._binary_search_edge(cap, ref_roi, position, bbox, lo, hi, "appear")
 
-    def _find_disappearance(self, cap: cv2.VideoCapture,
-                           marker_end: float,
-                           next_start: float,
-                           position=None,
-                           bbox=None) -> float:
+    def _find_disappearance(self, cap, marker_end, next_start,
+                            position=None, bbox=None) -> float:
         """
         기본 marker_end 뒤 1초에서 시작.
-        텍스트가 있으면 0.5초씩 더 뒤로 확장 (최대 3번).
+        SAME이면 0.5초씩 더 뒤로 확장 (최대 3번, 다음 자막 전까지만).
         """
+        ref_roi = self._get_subtitle_roi_at(cap, marker_end, position, bbox)
+        if ref_roi is None:
+            return marker_end
         lo = marker_end
-        # 기본 사라짐 탐색 범위: marker_end + 1초 (다음 자막 전이면 더 짧게)
         search_limit = next_start - 0.05 if next_start != float('inf') else marker_end + 1.0
         hi = min(search_limit, marker_end + 1.0)
-        # hi에 텍스트가 있으면 점진 확장
+        # hi에도 SAME이면 뒤로 확장
         extend = 0
-        while self._has_text_at(cap, hi, position, bbox) and extend < 3 and hi < search_limit - 0.1:
+        while (self._is_same_subtitle(cap, hi, ref_roi, position, bbox)
+               and extend < 3 and hi < search_limit - 0.1):
             hi = min(hi + 0.5, search_limit)
             extend += 1
-        return self._binary_search_edge(cap, position, bbox, lo, hi, "disappear")
-
-    def _has_text_at(self, cap, t, position, bbox) -> bool:
-        frame_shape = (
-            int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-            int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-        )
-        coords = self._get_roi_coords(frame_shape, position, bbox)
-        cap.set(cv2.CAP_PROP_POS_MSEC, int(t * 1000))
-        ret, frame = cap.read()
-        if not ret:
-            return False
-        gray = self._extract_roi_gray(frame, coords)
-        if gray.size == 0:
-            return False
-        mean_val = float(np.mean(gray))
-        return mean_val < 200
+        return self._binary_search_edge(cap, ref_roi, position, bbox, lo, hi, "disappear")
 
     def refine(self, video_path: str, subtitles: List[Dict]) -> List[Dict]:
         """
@@ -176,13 +166,13 @@ class SyncRefiner:
             bbox = sub.get("bbox")
             next_start = subtitles[i + 1]["start"] if i + 1 < len(subtitles) else float('inf')
 
-            # 등장 지점: original_start 앞쪽 2초를 이진 탐색
+            # 등장 지점: original_start 앞쪽에서 이진 탐색
             refined_start = self._find_appearance(
                 cap, original_start, position, bbox
             )
 
-            # 사라짐 지점: original_end 뒤쪽을 이진 탐색 (다음 자막 전까지)
-            # 사라짐 탐색 시작점: 최소 0.3초 후부터 (등장 직후 바로 사라지는 건 막기 위해)
+            # 사라짐 지점: original_end 뒤쪽에서 이진 탐색
+            # 최소 0.3초 후부터 (등장 직후 바로 사라지는 건 막기 위해)
             disappear_search_start = max(original_start + 0.3, refined_start + 0.2)
             refined_end = self._find_disappearance(
                 cap, disappear_search_start, next_start, position, bbox
