@@ -201,42 +201,72 @@ class VLMClient:
             "Authorization": f"Bearer {self.api_key}"
         }
 
-        # Retry: 실패 시 최대 3회 재시도 (지수 백오프)
+        # Retry: 실패 시 최대 3회 재시도 (delay 3s -> 6s)
         last_error = None
         parsed = None
         raw_content = ""
         for attempt in range(3):
             try:
+                print(f"[VLMClient] API call attempt {attempt+1}/3...")
                 response = requests.post(
                     f"{self.base_url}/chat/completions",
                     headers=headers, json=payload, timeout=180
                 )
-                if response.status_code != 200:
-                    err_text = response.text[:500]
-                    last_error = f"HTTP {response.status_code}: {err_text}"
-                    if response.status_code == 429:
-                        wait = 2 ** attempt
-                        print(f"[VLMClient] Rate limited. Waiting {wait}s before retry {attempt+1}/3...")
+                status = response.status_code
+                body_len = len(response.text)
+                body_preview = response.text[:200].replace('\n', ' ')
+                print(f"[VLMClient] HTTP {status}, body len={body_len}, preview=[{body_preview}]")
+
+                if status != 200:
+                    err_text = response.text[:500] if response.text else "(empty body)"
+                    last_error = f"HTTP {status}: {err_text}"
+                    print(f"[VLMClient] API error: {last_error}")
+                    # Non-retryable client errors (4xx except 429)
+                    if status != 429 and 400 <= status < 500:
+                        break
+                    if attempt < 2:
+                        wait = 3 * (2 ** attempt)  # 3s, 6s
+                        print(f"[VLMClient] Retrying in {wait}s...")
                         time.sleep(wait)
-                        continue
-                    raise Exception(last_error)
+                    continue
+
+                # HTTP 200 but empty body
+                if not response.text or not response.text.strip():
+                    last_error = f"HTTP 200 but empty body (attempt {attempt+1}/3)"
+                    print(f"[VLMClient] {last_error}")
+                    if attempt < 2:
+                        wait = 3 * (2 ** attempt)
+                        print(f"[VLMClient] Retrying in {wait}s...")
+                        time.sleep(wait)
+                    continue
 
                 result = response.json()
                 raw_content = result['choices'][0]['message']['content']
+                print(f"[VLMClient] Content len={len(raw_content)}")
 
                 parsed = self._parse_json_response(raw_content)
                 if parsed is None:
-                    raise Exception(f"JSON parse failed. Raw response: {raw_content[:500]}")
+                    last_error = f"JSON parse failed (attempt {attempt+1}/3). First 500 chars: {raw_content[:500]}"
+                    print(f"[VLMClient] {last_error}")
+                    if attempt < 2:
+                        wait = 3 * (2 ** attempt)
+                        print(f"[VLMClient] Retrying in {wait}s...")
+                        time.sleep(wait)
+                    continue
 
-                break  # 성공
+                break  # SUCCESS
+
             except Exception as e:
                 last_error = str(e)
+                print(f"[VLMClient] Exception on attempt {attempt+1}/3: {last_error}")
                 if attempt < 2:
-                    wait = 2 ** attempt
-                    print(f"[VLMClient] Batch failed, retrying in {wait}s... ({attempt+1}/3)")
+                    wait = 3 * (2 ** attempt)
+                    print(f"[VLMClient] Retrying in {wait}s...")
                     time.sleep(wait)
-                else:
-                    raise Exception(f"VLM Processing Error: {last_error}") from e
+                continue
+
+        if parsed is None:
+            raise Exception(f"VLM Processing Error: {last_error}")
 
         # 응답 형식 처리
         if isinstance(parsed, dict) and 'subtitles' in parsed:

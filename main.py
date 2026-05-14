@@ -3,6 +3,7 @@ import os
 import json
 import shutil
 import traceback
+import time
 from typing import List, Tuple, Dict
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
@@ -113,10 +114,14 @@ class AnalysisWorker(QThread):
                             self.log.emit(f"  -> Extracted {len(results)} subtitles from batch {batch_num}")
                         except Exception as e:
                             self.log.emit(f"  -> VLM batch {batch_num} failed: {str(e)}")
+                            time.sleep(10)  # Rate limit cooldown before next batch
                             continue
 
                         pct = 35 + int((batch_num / total_batches) * 45)
                         self.progress.emit(pct, 100, f"Phase 2/3: Batch {batch_num}/{total_batches}")
+
+                        # Rate limit avoidance: wait between batches
+                        time.sleep(2)
 
                     self.log.emit(f"  -> VLM total: {len(all_results)} subtitles extracted")
                     if not all_results:
