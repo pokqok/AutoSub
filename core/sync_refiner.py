@@ -118,9 +118,8 @@ class SyncRefiner:
         current_roi = self._get_subtitle_roi_at(t, position, bbox, frame_list)
         if current_roi is None or current_roi.size == 0:
             return False
-        # C. 자막 없음 빠른 판정: 현재 ROI에 edge가 거의 없으면 자막이 사라진 것
-        if not self._has_subtitle(current_roi):
-            return False
+        # _has_subtitle 체크 제거 — 짧은 세로쓰기 자막 오탐(False Negative) 방지.
+        # tight CRAFT bbox 쓰면 자막 없는 배경은 ref_roi와 similarity가 자연히 낮아짐.
         sim = self._roi_similarity(current_roi, ref_roi)
         return sim >= threshold
 
