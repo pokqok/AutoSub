@@ -266,11 +266,18 @@ class SyncRefiner:
                 original_start, position, bbox, frame_list, ref_roi, adaptive_threshold
             )
 
-            disappear_search_start = max(original_start + 0.5, refined_start + 0.4)
-            refined_end = self._find_disappearance(
-                disappear_search_start, next_start, position, bbox,
-                frame_list, ref_roi, adaptive_threshold
-            )
+            # ★ Phase 1 disappear 마커가 있으면 binary search 스킵
+            disappear_frame = next((f for f in frame_list
+                                    if f.get('is_disappear') and f['timestamp'] > original_start), None)
+            if disappear_frame:
+                print(f"[SYNC] Using disappear marker: {disappear_frame['timestamp']:.2f}")
+                refined_end = disappear_frame['timestamp']
+            else:
+                disappear_search_start = max(original_start + 0.5, refined_start + 0.4)
+                refined_end = self._find_disappearance(
+                    disappear_search_start, next_start, position, bbox,
+                    frame_list, ref_roi, adaptive_threshold
+                )
 
             if refined_end > next_start:
                 refined_end = next_start
