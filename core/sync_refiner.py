@@ -259,15 +259,8 @@ class SyncRefiner:
                 refined.append(sub_copy)
                 continue
 
-            # ★ 적응형 threshold: 자막 등장 전 배경과의 유사도를 baseline으로 측정
-            pre_t = max(min_t, original_start - 2.0)
-            pre_roi = self._get_subtitle_roi_at(pre_t, position, bbox, frame_list)
-            if pre_roi is not None and pre_roi.size > 0:
-                baseline_sim = self._roi_similarity(pre_roi, ref_roi)
-                # baseline보다 0.15 높아야 "자막 있음"으로 판정
-                adaptive_threshold = min(0.75, baseline_sim + 0.15)
-            else:
-                adaptive_threshold = 0.55
+            # ★ 고정 threshold: 배경 유사도에 따라 threshold가 변하면 타이밍이 오락가락함
+            adaptive_threshold = 0.55
 
             refined_start = self._find_appearance(
                 original_start, position, bbox, frame_list, ref_roi, adaptive_threshold
