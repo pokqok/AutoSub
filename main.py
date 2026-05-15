@@ -117,17 +117,30 @@ class AnalysisWorker(QThread):
                         self.log.emit(f"  -> WARNING: No subtitle frames detected in {os.path.basename(video_path)}.")
                         continue
 
+                    # Phase 1 disappear 프레임의 timestamp를 각 마커의 end_ts로 매핑
+                    for i, marker in enumerate(subtitle_frames):
+                        if marker.get("is_disappear"):
+                            continue
+                        end_ts = None
+                        # 다음 disappear 프레임 찾기
+                        for j in range(i + 1, len(subtitle_frames)):
+                            if subtitle_frames[j].get("is_disappear"):
+                                end_ts = subtitle_frames[j]["timestamp"]
+                                break
+                        marker["end_ts"] = end_ts
+
                     # Dense frames for Phase 3 sync refinement
                     self._check_cancel()
-                    self.log.emit("  -> Extracting dense frames (±2.5s @ 0.1s) for sync refinement...")
+                    self.log.emit("  -> Extracting dense frames (start-1.5s ~ end+1.5s @ 0.1s) for sync refinement...")
                     
                     def dense_progress(curr, total):
                         self._check_cancel()
                         pct = 90 + int(curr / total * 10)
                         self.progress.emit(pct, 100, f"Phase 1/3: Dense frames {curr}/{total}")
                     
+                    dense_markers = [m for m in subtitle_frames if not m.get("is_disappear")]
                     dense_frames = frame_filter.extract_dense_frames(
-                        video_path, subtitle_frames, temp_dir,
+                        video_path, dense_markers, temp_dir,
                         window_sec=1.5,
                         progress_callback=dense_progress
                     )

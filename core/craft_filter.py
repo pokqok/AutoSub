@@ -284,11 +284,18 @@ class CRAFTFrameFilter:
         # 1. 모든 필요 timestamp 수집 + 가장 가까운 마커의 bbox 매핑
         needed: Dict[float, Tuple] = {}  # timestamp -> bbox
         for marker in markers:
-            center = float(marker.get("timestamp", 0))
+            start_ts = float(marker.get("timestamp", 0))
+            end_ts = marker.get("end_ts")
+            if end_ts is not None:
+                # start/end 기반: 실제 자막 구간 ±1.5s
+                t = max(0.0, start_ts - 1.5)
+                range_end = min(duration, end_ts + 1.5)
+            else:
+                # fallback: center 기준 ±window_sec
+                t = max(0.0, start_ts - window_sec)
+                range_end = min(duration, start_ts + window_sec)
             bbox = marker.get("bbox")
-            t = max(0.0, center - window_sec)
-            end_t = min(duration, center + window_sec)
-            while t <= end_t:
+            while t <= range_end:
                 t_r = round(t, 1)
                 if t_r in needed:
                     t += step_sec
