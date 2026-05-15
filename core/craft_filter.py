@@ -111,7 +111,7 @@ class CRAFTFrameFilter:
 
     @staticmethod
     def _is_new_subtitle(roi: np.ndarray, prev_roi: Optional[np.ndarray],
-                         threshold: float = 0.03) -> bool:
+                         threshold: float = 0.08) -> bool:
         """픽셀 diff 기반 — 같은 위치 다른 텍스트도 구분 가능"""
         if prev_roi is None or roi is None or roi.size == 0 or prev_roi.size == 0:
             return True
@@ -304,24 +304,15 @@ class CRAFTFrameFilter:
                 next_idx += 1
                 continue
 
-            # ROI 크롭 후 저장 (배경 노이즈 제거, SyncRefiner 정밀 비교용)
-            if target_bbox:
-                x1, y1, x2, y2 = target_bbox
-                x1, y1 = max(0, x1), max(0, y1)
-                x2, y2 = min(frame.shape[1], x2), min(frame.shape[0], y2)
-                roi_frame = frame[y1:y2, x1:x2]
-            else:
-                roi_frame = frame
-
             filepath = os.path.join(output_folder, f"dense_{int(target_t * 1000):08d}.jpg")
-            cv2.imwrite(filepath, roi_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+            cv2.imwrite(filepath, frame, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
 
             dense_frames.append({
                 "timestamp": target_t,
                 "filepath": filepath,
-                "bbox": (0, 0, roi_frame.shape[1], roi_frame.shape[0]),
-                "orig_w": roi_frame.shape[1],
-                "orig_h": roi_frame.shape[0]
+                "bbox": target_bbox,
+                "orig_w": orig_w,
+                "orig_h": orig_h
             })
             count += 1
 

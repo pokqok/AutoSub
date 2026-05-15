@@ -217,7 +217,7 @@ class SyncRefiner:
         max_t = max(f["timestamp"] for f in frame_list)
         lo = marker_end
         search_limit = next_start if next_start != float('inf') else marker_end + 5.0
-        hi = min(search_limit, marker_end + 1.0, max_t)
+        hi = min(search_limit, marker_end + 2.0, max_t)
 
         while (self._is_same_subtitle(hi, ref_roi, position, bbox, frame_list, threshold)
                and hi < search_limit - 0.1):
@@ -273,7 +273,7 @@ class SyncRefiner:
                 original_start, position, bbox, frame_list, ref_roi, adaptive_threshold
             )
 
-            disappear_search_start = max(original_start + 0.3, refined_start + 0.2)
+            disappear_search_start = max(original_start + 0.5, refined_start + 0.4)
             refined_end = self._find_disappearance(
                 disappear_search_start, next_start, position, bbox,
                 frame_list, ref_roi, adaptive_threshold
@@ -281,8 +281,8 @@ class SyncRefiner:
 
             if refined_end > next_start:
                 refined_end = next_start
-            if refined_end <= refined_start:
-                refined_end = refined_start + 0.5
+            if refined_end - refined_start < 1.0:
+                refined_end = refined_start + 1.0
 
             refined.append({**sub, "start": refined_start, "end": refined_end})
 
