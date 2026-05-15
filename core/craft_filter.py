@@ -149,6 +149,8 @@ class CRAFTFrameFilter:
 
         saved_frames: List[Dict] = []
         prev_roi_img = None
+        prev_had_subtitle = False
+        prev_bbox = None
         frame_idx = 0
         saved_count = 0
         skipped_count = 0
@@ -182,8 +184,33 @@ class CRAFTFrameFilter:
                     frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
                 found, bbox = self.has_text(frame)
+                
+                # ★ 자막 소멸 마커: 이전에 자막이 있었는데 지금 없으면 무조건 저장
                 if not found:
-                    skipped_count += 1
+                    if prev_had_subtitle:
+                        # 중복 제거 없이 소멸 프레임 저장
+                        timestamp = frame_idx / fps
+                        filename = f"frame_{timestamp:.3f}_end.jpg"
+                        filepath = os.path.join(output_folder, filename)
+                        cv2.imwrite(filepath, frame, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                        
+                        # bbox는 이전 자막 위치를 사용 (사라진 상태 표시용)
+                        orig_bbox = prev_bbox
+                        if scale != 1.0 and prev_bbox:
+                            orig_bbox = tuple(int(v / scale) for v in prev_bbox)
+                        
+                        saved_frames.append({
+                            "timestamp": timestamp,
+                            "filepath": filepath,
+                            "bbox": orig_bbox,
+                            "orig_w": orig_w,
+                            "orig_h": orig_h,
+                            "is_disappear": True
+                        })
+                        saved_count += 1
+                        prev_had_subtitle = False
+                    else:
+                        skipped_count += 1
                     continue
 
                 # ROI 크롭
@@ -193,6 +220,8 @@ class CRAFTFrameFilter:
                 # 중복 제거
                 if not self._is_new_subtitle(roi, prev_roi_img):
                     dup_count += 1
+                    prev_had_subtitle = True
+                    prev_bbox = bbox
                     continue
 
                 # 저장 (원본 해상도 bbox로 역변환)
@@ -215,6 +244,8 @@ class CRAFTFrameFilter:
                 })
                 saved_count += 1
                 prev_roi_img = roi
+                prev_had_subtitle = True
+                prev_bbox = bbox
 
         finally:
             cap.release()
