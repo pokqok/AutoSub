@@ -282,26 +282,40 @@ class CRAFTFrameFilter:
         orig_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
         # 1. 모든 필요 timestamp 수집 + 가장 가까운 마커의 bbox 매핑
+        # 중간 구간은 제외하고 시작/종료 주변 3초만 추출
         needed: Dict[float, Tuple] = {}  # timestamp -> bbox
         for marker in markers:
             start_ts = float(marker.get("timestamp", 0))
             end_ts = marker.get("end_ts")
+            bbox = marker.get("bbox")
+
             if end_ts is not None:
-                # start/end 기반: 실제 자막 구간 ±1.5s
+                # 구간1: 등장 주변 (start-1.5 ~ start+1.5)
                 t = max(0.0, start_ts - 1.5)
-                range_end = min(duration, end_ts + 1.5)
+                range1_end = min(duration, start_ts + 1.5)
+                while t <= range1_end:
+                    t_r = round(t, 1)
+                    if t_r not in needed:
+                        needed[t_r] = bbox
+                    t += step_sec
+
+                # 구간2: 소멸 주변 (end-1.5 ~ end+1.5)
+                t = max(0.0, end_ts - 1.5)
+                range2_end = min(duration, end_ts + 1.5)
+                while t <= range2_end:
+                    t_r = round(t, 1)
+                    if t_r not in needed:
+                        needed[t_r] = bbox
+                    t += step_sec
             else:
                 # fallback: center 기준 ±window_sec
                 t = max(0.0, start_ts - window_sec)
                 range_end = min(duration, start_ts + window_sec)
-            bbox = marker.get("bbox")
-            while t <= range_end:
-                t_r = round(t, 1)
-                if t_r in needed:
+                while t <= range_end:
+                    t_r = round(t, 1)
+                    if t_r not in needed:
+                        needed[t_r] = bbox
                     t += step_sec
-                    continue
-                needed[t_r] = bbox
-                t += step_sec
 
         if not needed:
             cap.release()
