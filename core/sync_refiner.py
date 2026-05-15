@@ -277,6 +277,7 @@ class SyncRefiner:
             if refined_end - refined_start < 1.0:
                 refined_end = refined_start + 1.0
 
+            print(f"[SYNC] refined_start={refined_start:.2f} | refined_end={refined_end:.2f}")
             refined.append({**sub, "start": refined_start, "end": refined_end})
 
         return refined
