@@ -106,7 +106,11 @@ class SyncRefiner:
         print(f"[ROI DEBUG] nearest frame: {frame_data}")
         if frame_data is None:
             return None
-        frame = cv2.imread(frame_data["filepath"])
+        # cv2.imread 안 씀 — Windows 한글 경로 버그
+        with open(frame_data["filepath"], 'rb') as f:
+            img_bytes = f.read()
+        nparr = np.frombuffer(img_bytes, np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         if frame is None:
             return None
         actual_bbox = bbox if bbox is not None else frame_data.get("bbox")
