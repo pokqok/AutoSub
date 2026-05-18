@@ -29,7 +29,11 @@ class SyncRefiner:
         img_h, img_w = frame_shape[:2]
         if bbox is not None:
             x1, y1, x2, y2 = bbox
-            return x1, y1, x2, y2
+            # bbox 면적이 화면의 20% 초과하면 position 기반으로 fallback
+            bbox_area = (x2 - x1) * (y2 - y1)
+            if bbox_area <= 0.20 * img_w * img_h:
+                return x1, y1, x2, y2
+            # too large → ignore bbox, fall through to position-based
         roi = POSITION_ROI.get(position, DEFAULT_ROI)
         x1 = int(img_w * roi[0])
         y1 = int(img_h * roi[1])
@@ -280,23 +284,18 @@ class SyncRefiner:
                 original_start, position, bbox, frame_list, ref_roi, adaptive_threshold
             )
 
-            # ★ Phase 1 disappear 마커가 있으면 binary search 스킵
-            disappear_frame = next((f for f in frame_list
-                                    if f.get('is_disappear') and f['timestamp'] > original_start), None)
-            if disappear_frame:
-                print(f"[SYNC] Using disappear marker: {disappear_frame['timestamp']:.2f}")
-                refined_end = disappear_frame['timestamp']
-            else:
-                disappear_search_start = max(original_start + 0.5, refined_start + 0.4)
-                refined_end = self._find_disappearance(
-                    disappear_search_start, next_start, position, bbox,
-                    frame_list, ref_roi, adaptive_threshold
-                )
+            disappear_search_start = max(original_start + 0.5, refined_start + 0.4)
+            refined_end = self._find_disappearance(
+                disappear_search_start, next_start, position, bbox,
+                frame_list, ref_roi, adaptive_threshold
+            )
 
             if refined_end > next_start:
-                refined_end = next_start
-            if refined_end - refined_start < 1.0:
-                refined_end = refined_start + 1.0
+                refined_end = next_start - 0.05
+            if refined_end - refined_start < 0.5:
+                refined_end = min(refined_start + 0.5, next_start - 0.05)
+            if refined_end <= refined_start:
+                refined_end = refined_start + 0.5
 
             print(f"[P3 OUT] sub {i}: refined_start={refined_start:.2f} "
                   f"refined_end={refined_end:.2f} "
