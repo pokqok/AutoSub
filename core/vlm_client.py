@@ -409,5 +409,7 @@ class VLMClient:
                 "color": sub.get('color', '#FFFFFF'),
                 "position": pos or 'bottom-center'
             })
+            print(f"[VLM] sub {i}: start={start_t:.2f} end={end_t:.2f} "
+                  f"text='{sub.get('translated','')[:20]}' frame_idx={frame_idx}")
 
         return results

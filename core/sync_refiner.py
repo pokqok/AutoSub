@@ -250,7 +250,12 @@ class SyncRefiner:
             bbox = sub.get("bbox") or (nearest.get("bbox") if nearest else None)
             next_start = subtitles[i + 1]["start"] if i + 1 < len(subtitles) else float('inf')
 
+            print(f"[P3 IN ] sub {i}: start={original_start:.2f} end={sub['end']:.2f} "
+                  f"next_start={next_start:.2f} text='{sub.get('translated','')[:20]}'")
+
             ref_roi = self._get_subtitle_roi_at(original_start, position, bbox, frame_list)
+            print(f"[P3 ROI] sub {i}: ref_roi={'OK' if ref_roi is not None else 'NONE'} "
+                  f"bbox={bbox} position={position}")
             if ref_roi is None or ref_roi.size == 0:
                 # 스킵 경로: start==end 보정 추가
                 sub_copy = dict(sub)
@@ -261,6 +266,7 @@ class SyncRefiner:
 
             # ★ 고정 threshold: 배경 유사도에 따라 threshold가 변하면 타이밍이 오락가락함
             adaptive_threshold = 0.55
+            print(f"[P3 THR] sub {i}: fixed_threshold={adaptive_threshold:.3f}")
 
             refined_start = self._find_appearance(
                 original_start, position, bbox, frame_list, ref_roi, adaptive_threshold
@@ -284,7 +290,9 @@ class SyncRefiner:
             if refined_end - refined_start < 1.0:
                 refined_end = refined_start + 1.0
 
-            print(f"[SYNC] refined_start={refined_start:.2f} | refined_end={refined_end:.2f}")
+            print(f"[P3 OUT] sub {i}: refined_start={refined_start:.2f} "
+                  f"refined_end={refined_end:.2f} "
+                  f"(was {original_start:.2f}~{sub['end']:.2f})")
             refined.append({**sub, "start": refined_start, "end": refined_end})
 
         return refined

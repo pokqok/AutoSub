@@ -186,8 +186,10 @@ class AnalysisWorker(QThread):
                         self.log.emit(f"  -> WARNING: VLM returned no subtitles for {os.path.basename(video_path)}.")
                         continue
 
+                    print(f"[SORT PRE ] {[(r['start'], r.get('translated','')[:10]) for r in all_results]}")
                     # Phase 2 완료 후, Phase 3 진입 전 — 배치 경계에서 순서 역전 방지
                     all_results.sort(key=lambda x: x["start"])
+                    print(f"[SORT POST] {[(r['start'], r.get('translated','')[:10]) for r in all_results]}")
 
                     # Phase 3: 세부 싱크 보정
                     self._check_cancel()
