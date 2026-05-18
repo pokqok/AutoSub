@@ -229,7 +229,7 @@ class SyncRefiner:
         hi = min(search_limit, marker_end + 2.0, max_t)
 
         while (self._is_same_subtitle(hi, ref_roi, position, bbox, frame_list, threshold)
-               and hi < search_limit - 0.1):
+               and hi < min(search_limit, max_t) - 0.1):
             hi = min(hi + 0.5, search_limit, max_t)
 
         return self._binary_search_edge(
