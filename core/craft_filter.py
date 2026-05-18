@@ -366,6 +366,8 @@ class CRAFTFrameFilter:
             if success:
                 with open(filepath, 'wb') as f:
                     f.write(buf.tobytes())
+            if not os.path.exists(filepath):
+                print(f"[DENSE ERROR] 저장 실패: {filepath}")
 
             dense_frames.append({
                 "timestamp": target_t,

@@ -100,7 +100,10 @@ class SyncRefiner:
 
     def _get_subtitle_roi_at(self, t: float, position, bbox, frame_list: List[Dict]):
         """특정 시간 t 근처의 저장된 프레임을 읽어 ROI를 추출합니다. 없으면 None."""
+        print(f"[ROI DEBUG] looking for t={t:.2f}, frame_list size={len(frame_list)}")
+        print(f"[ROI DEBUG] frame_list timestamps: {[f['timestamp'] for f in frame_list[:5]]}")
         frame_data = self._get_nearest_frame(t, frame_list)
+        print(f"[ROI DEBUG] nearest frame: {frame_data}")
         if frame_data is None:
             return None
         frame = cv2.imread(frame_data["filepath"])
