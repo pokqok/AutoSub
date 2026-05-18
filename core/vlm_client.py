@@ -169,7 +169,9 @@ class VLMClient:
             return all_subtitles
 
     def _encode_image(self, filepath: str) -> str:
+        print(f"[VLM] reading: {filepath}")
         if not os.path.exists(filepath):
+            print(f"[VLM] FILE NOT FOUND: {filepath}")
             raise FileNotFoundError(f"Frame file not found: {filepath}")
         with open(filepath, 'rb') as f:
             return base64.b64encode(f.read()).decode('utf-8')
