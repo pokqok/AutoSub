@@ -206,9 +206,8 @@ class SyncRefiner:
         while self._is_same_subtitle(lo, ref_roi, position, bbox, frame_list, threshold) and lo > min_t:
             lo = max(min_t, lo - 0.5)
 
-        return self._verify_boundary(
-            self._binary_search_edge(ref_roi, position, bbox, lo, hi, "appear", frame_list, threshold),
-            "appear", ref_roi, position, bbox, frame_list, threshold
+        return self._binary_search_edge(
+            ref_roi, position, bbox, lo, hi, "appear", frame_list, threshold
         )
 
     def _find_disappearance(self, marker_end: float, next_start: float,
@@ -233,9 +232,8 @@ class SyncRefiner:
                and hi < search_limit - 0.1):
             hi = min(hi + 0.5, search_limit, max_t)
 
-        return self._verify_boundary(
-            self._binary_search_edge(ref_roi, position, bbox, lo, hi, "disappear", frame_list, threshold),
-            "disappear", ref_roi, position, bbox, frame_list, threshold
+        return self._binary_search_edge(
+            ref_roi, position, bbox, lo, hi, "disappear", frame_list, threshold
         )
 
     def refine(self, video_path: str, subtitles: List[Dict],
