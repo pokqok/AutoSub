@@ -192,7 +192,10 @@ class CRAFTFrameFilter:
                         timestamp = frame_idx / fps
                         filename = f"frame_{timestamp:.3f}_end.jpg"
                         filepath = os.path.join(output_folder, filename)
-                        cv2.imwrite(filepath, frame, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                        success, buf = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                        if success:
+                            with open(filepath, 'wb') as f:
+                                f.write(buf.tobytes())
                         
                         # bbox는 이전 자막 위치를 사용 (사라진 상태 표시용)
                         orig_bbox = prev_bbox
@@ -233,7 +236,10 @@ class CRAFTFrameFilter:
                 timestamp = frame_idx / fps
                 filename = f"frame_{timestamp:.3f}.jpg"
                 filepath = os.path.join(output_folder, filename)
-                cv2.imwrite(filepath, frame, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                success, buf = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                if success:
+                    with open(filepath, 'wb') as f:
+                        f.write(buf.tobytes())
 
                 saved_frames.append({
                     "timestamp": timestamp,
@@ -356,7 +362,10 @@ class CRAFTFrameFilter:
                 continue
 
             filepath = os.path.join(output_folder, f"dense_{int(target_t * 1000):08d}.jpg")
-            cv2.imwrite(filepath, frame, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+            success, buf = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+            if success:
+                with open(filepath, 'wb') as f:
+                    f.write(buf.tobytes())
 
             dense_frames.append({
                 "timestamp": target_t,
