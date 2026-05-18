@@ -32,15 +32,20 @@ class SubtitleExporter:
         """한국어 자막 자동 줄바꿈. ASS용\\N / SRT용\\n 모두 지원 가능."""
         if len(text) <= max_chars:
             return text
-        # 구두점/공백 우선 탐색
-        split_idx = -1
-        for i in range(max_chars, max_chars // 2, -1):
-            if i < len(text) and text[i] in ' ,.!?:;~…':
-                split_idx = i + 1
-                break
-        if split_idx == -1:
-            split_idx = max_chars
-        return text[:split_idx] + _insert_newlines(text[split_idx:], max_chars)
+        lines = []
+        remaining = text
+        while len(remaining) > max_chars:
+            split_idx = -1
+            for i in range(max_chars, max_chars // 2, -1):
+                if i < len(remaining) and remaining[i] in ' ,.!?:;~…':
+                    split_idx = i + 1
+                    break
+            if split_idx == -1:
+                split_idx = max_chars
+            lines.append(remaining[:split_idx])
+            remaining = remaining[split_idx:]
+        lines.append(remaining)
+        return '\\N'.join(lines)
 
     @staticmethod
     def _calc_fontsize(sub: Dict, playresy: int = 1080) -> int:
