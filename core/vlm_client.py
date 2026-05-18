@@ -239,7 +239,7 @@ class VLMClient:
             "1. Do NOT duplicate consecutive identical subtitles.",
             "2. Skip frames with no Japanese subtitle.",
             "3. Return ONLY the JSON array. No explanations, no markdown code blocks.",
-            "4. LINE BREAKS: In the 'translated' field, insert '\\\\N' (literal backslash-N) to create line breaks when a subtitle is too long. Aim for max ~18-20 Korean characters per line. Do NOT leave overly long single-line subtitles.",
+            "4. LINE BREAKS: Only insert '\\\\N' when a single subtitle line exceeds ~30 Korean characters. Otherwise keep it as one line. Do NOT insert breaks for short or medium lines.",
         ]
 
         if custom_prompt:
