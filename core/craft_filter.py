@@ -296,17 +296,17 @@ class CRAFTFrameFilter:
             bbox = marker.get("bbox")
 
             if end_ts is not None:
-                # 구간1: 등장 주변 (start-1.5 ~ start) — 1.5초
-                t = max(0.0, start_ts - 1.5)
+                # 구간1: 등장 주변 (start-1.0 ~ start) — 1.0초
+                t = max(0.0, start_ts - 1.0)
                 while t <= start_ts:
                     t_r = round(t, 1)
                     if t_r not in needed:
                         needed[t_r] = bbox
                     t += step_sec
 
-                # 구간2: 소멸 주변 (end ~ end+1.5) — 1.5초
+                # 구간2: 소멸 주변 (end ~ end+1.0) — 1.0초
                 t = end_ts
-                range2_end = min(duration, end_ts + 1.5)
+                range2_end = min(duration, end_ts + 1.0)
                 while t <= range2_end:
                     t_r = round(t, 1)
                     if t_r not in needed:

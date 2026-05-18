@@ -184,23 +184,19 @@ class SyncRefiner:
             # ── start 탐색 ──
             appear_frames = self._get_frames_in_window(
                 frame_list,
-                max(min_t, original_start - 2.0),
-                original_start + 0.3
+                max(min_t, original_start - 1.0),
+                original_start
             )
             refined_start = self._find_start(appear_frames, position, bbox, original_start)
             if refined_start is None:
                 refined_start = original_start
 
             # ── end 탐색 ──
-            vlm_duration = sub["end"] - sub["start"]
-            search_end = min(
-                original_start + max(vlm_duration * 1.5 + 2.0, 5.0),
-                max_t
-            )
+            vlm_end = sub["end"]
             disappear_frames = self._get_frames_in_window(
                 frame_list,
-                original_start,
-                search_end
+                vlm_end,
+                min(vlm_end + 1.0, max_t)
             )
             refined_end = self._find_end(disappear_frames, position, bbox)
 
