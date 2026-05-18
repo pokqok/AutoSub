@@ -164,6 +164,7 @@ class AnalysisWorker(QThread):
                         self.log.emit(f"  -> Batch {batch_num}/{total_batches} ({len(batch)} frames)")
 
                         try:
+                            print(f"[DEBUG] frame_batch paths: {[f['filepath'] for f in batch]}")
                             results = client.analyze_batch(
                                 batch, custom_prompt=custom_prompt,
                                 previous_subtitles=all_results[-3:]
