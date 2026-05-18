@@ -16,7 +16,7 @@ POSITION_ROI = {
 
 MAX_BBOX_RATIO = 0.20   # 화면 면적 20% 초과 bbox 무시
 MAX_SEARCH_SEC = 15.0   # end 탐색 최대 범위
-SPIKE_FACTOR   = 3.0    # baseline 대비 몇 배 이상이면 변화로 판정
+SPIKE_FACTOR   = 2.0    # baseline 대비 몇 배 이상이면 변화로 판정
 MIN_DIFF       = 3.0    # 절대 최소 diff (노이즈 제거)
 
 
@@ -109,9 +109,9 @@ class SyncRefiner:
         if not diffs:
             return None
 
-        # baseline: 처음 3개 diff의 평균 (자막이 정지해 있는 안정 구간)
-        baseline_vals = [d for _, d in diffs[:3]]
-        baseline = max(np.mean(baseline_vals), MIN_DIFF)
+        # baseline: 전체 diff의 median (이상치에 강건)
+        baseline_vals = [d for _, d in diffs]
+        baseline = max(float(np.median(baseline_vals)), MIN_DIFF)
         threshold = baseline * self.spike_factor
 
         # 첫 번째 spike 시점 = 자막 사라지는 순간
@@ -140,9 +140,9 @@ class SyncRefiner:
         if not diffs:
             return None
 
-        # baseline: 가장 앞쪽 3개 (자막 없는 구간)
-        baseline_vals = [d for _, d in diffs[:3]]
-        baseline = max(np.mean(baseline_vals), MIN_DIFF)
+        # baseline: 전체 diff의 median (이상치에 강건)
+        baseline_vals = [d for _, d in diffs]
+        baseline = max(float(np.median(baseline_vals)), MIN_DIFF)
         threshold = baseline * self.spike_factor
 
         # original_start 이전에서 가장 가까운 spike
@@ -192,7 +192,11 @@ class SyncRefiner:
                 refined_start = original_start
 
             # ── end 탐색 ──
-            search_end = min(original_start + self.max_search_sec, max_t)
+            vlm_duration = sub["end"] - sub["start"]
+            search_end = min(
+                original_start + max(vlm_duration * 1.5 + 2.0, 5.0),
+                max_t
+            )
             disappear_frames = self._get_frames_in_window(
                 frame_list,
                 original_start,
