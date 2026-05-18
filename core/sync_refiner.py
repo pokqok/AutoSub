@@ -158,7 +158,10 @@ class SyncRefiner:
         min_t = min(f["timestamp"] for f in frame_list) if frame_list else 0.0
         max_t = max(f["timestamp"] for f in frame_list) if frame_list else boundary
 
-        for _ in range(3):
+        max_iter = 10
+        iter_count = 0
+        while iter_count < max_iter:
+            iter_count += 1
             before = self._is_same_subtitle(boundary - 0.1, ref_roi, position, bbox, frame_list, threshold)
             after  = self._is_same_subtitle(boundary + 0.1, ref_roi, position, bbox, frame_list, threshold)
 
