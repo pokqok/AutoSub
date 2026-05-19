@@ -118,17 +118,35 @@ class AnalysisWorker(QThread):
                         self.log.emit(f"  -> WARNING: No subtitle frames detected in {os.path.basename(video_path)}.")
                         continue
 
-                    # Phase 1 disappear 프레임의 timestamp를 각 마커의 end_ts로 매핑
-                    for i, marker in enumerate(subtitle_frames):
-                        if marker.get("is_disappear"):
-                            continue
-                        end_ts = None
-                        # 다음 disappear 프레임 찾기
-                        for j in range(i + 1, len(subtitle_frames)):
+                    # Phase 1 end_ts 매핑: 각 appear 마커의 end = 다음 이벤트(appear/disappear) 시점
+                    # 자막 변화(A→B)도 A의 종료를 의미하므로 disappear만이 아닌 다음 마커를 end로 사용
+                    appear_only = [m for m in subtitle_frames if not m.get("is_disappear")]
+                    for idx_m, marker in enumerate(appear_only):
+                        if idx_m + 1 < len(appear_only):
+                            # 다음 appear 마커의 timestamp = 현재 자막이 바뀌는 시점
+                            next_appear_ts = appear_only[idx_m + 1]["timestamp"]
+                        else:
+                            next_appear_ts = None
+
+                        # 다음 disappear 프레임 찾기 (전체 subtitle_frames에서)
+                        global_idx = subtitle_frames.index(marker)
+                        next_disappear_ts = None
+                        for j in range(global_idx + 1, len(subtitle_frames)):
                             if subtitle_frames[j].get("is_disappear"):
-                                end_ts = subtitle_frames[j]["timestamp"]
+                                next_disappear_ts = subtitle_frames[j]["timestamp"]
                                 break
-                        marker["end_ts"] = end_ts
+
+                        # end_ts = 다음 이벤트 중 먼저 오는 것
+                        candidates = [t for t in [next_appear_ts, next_disappear_ts] if t is not None]
+                        marker["end_ts"] = min(candidates) if candidates else None
+
+                    # ── 진단 로그: CRAFT 마커 전체 목록 ──
+                    print(f"\n[CRAFT MARKERS] Total: {len(subtitle_frames)} (appear: {len(appear_only)}, disappear: {len(subtitle_frames) - len(appear_only)})")
+                    for m in subtitle_frames:
+                        kind = "DISAPPEAR" if m.get("is_disappear") else "APPEAR"
+                        end_info = f", end_ts={m.get('end_ts', 'N/A')}" if not m.get("is_disappear") else ""
+                        print(f"  [{kind}] t={m['timestamp']:.2f}{end_info}")
+                    print()
 
                     # Dense frames for Phase 3 sync refinement
                     self._check_cancel()
@@ -196,8 +214,10 @@ class AnalysisWorker(QThread):
                     # CRAFT end_ts 매핑: VLM의 부정확한 end를 CRAFT disappear timestamp로 보정
                     # 단, 다음 자막 start 이전으로 cap (연속 자막에서 동일 CRAFT end 방지)
                     appear_markers = [m for m in subtitle_frames if not m.get("is_disappear")]
+                    print(f"\n[CRAFT→VLM MAPPING] {len(all_results)} VLM subs → {len(appear_markers)} CRAFT markers")
                     for i_cr, result in enumerate(all_results):
                         best_marker = min(appear_markers, key=lambda m: abs(m["timestamp"] - result["start"]))
+                        dist = abs(best_marker["timestamp"] - result["start"])
                         if best_marker.get("end_ts") is not None:
                             craft_end = best_marker["end_ts"]
                             old_end = result["end"]
@@ -207,7 +227,11 @@ class AnalysisWorker(QThread):
                                 result["end"] = min(craft_end, next_start - 0.05)
                             else:
                                 result["end"] = craft_end
-                            print(f"[CRAFT→END] sub start={result['start']:.2f}: VLM end {old_end:.2f} → CRAFT end {craft_end:.2f} → capped {result['end']:.2f}")
+                            print(f"[CRAFT→END] sub[{i_cr}] start={result['start']:.2f} → marker t={best_marker['timestamp']:.2f} (dist={dist:.2f}), "
+                                  f"VLM end={old_end:.2f}, CRAFT end_ts={craft_end:.2f}, final end={result['end']:.2f}")
+                        else:
+                            print(f"[CRAFT→END] sub[{i_cr}] start={result['start']:.2f} → marker t={best_marker['timestamp']:.2f} (dist={dist:.2f}), "
+                                  f"NO end_ts, keeping VLM end={result['end']:.2f}")
 
                     # Phase 3: 세부 싱크 보정
                     self._check_cancel()
