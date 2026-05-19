@@ -39,13 +39,11 @@ class CRAFTFrameFilter:
                  link_threshold: float = 0.2,
                  low_text: float = 0.4,
                  interval_sec: float = 1.0,
-                 dup_threshold: float = 0.95,
                  log_callback: Optional[Callable] = None):
         self.text_threshold = text_threshold
         self.link_threshold = link_threshold
         self.low_text = low_text
         self.interval_sec = interval_sec
-        self.dup_threshold = dup_threshold
         self.log_callback = log_callback
         self.craft = None
 
@@ -111,7 +109,7 @@ class CRAFTFrameFilter:
 
     @staticmethod
     def _is_new_subtitle(roi: np.ndarray, prev_roi: Optional[np.ndarray],
-                         threshold: float = 0.08) -> bool:
+                         threshold: float = 0.15) -> bool:
         """픽셀 diff 기반 — 같은 위치 다른 텍스트도 구분 가능"""
         if prev_roi is None or roi is None or roi.size == 0 or prev_roi.size == 0:
             return True
