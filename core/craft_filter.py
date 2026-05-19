@@ -302,9 +302,9 @@ class CRAFTFrameFilter:
                         needed[t_r] = bbox
                     t += step_sec
 
-                # 구간2: 소멸 주변 (end-1.0 ~ end) — 자막이 사라지기 직전 구간
+                # 구간2: 소멸 주변 (end-1.0 ~ end+1.0) — 자막이 사라지기 직전+직후 구간
                 t = max(0.0, end_ts - 1.0)
-                range2_end = end_ts
+                range2_end = min(duration, end_ts + 1.0)
                 while t <= range2_end:
                     t_r = round(t, 1)
                     if t_r not in needed:

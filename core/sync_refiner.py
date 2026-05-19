@@ -194,7 +194,7 @@ class SyncRefiner:
             disappear_frames = self._get_frames_in_window(
                 frame_list,
                 max(vlm_end - 1.0, min_t),
-                vlm_end
+                min(vlm_end + 1.0, max_t)  # 소멸이 vlm_end 이후일 수도 있으므로 +1초 확장
             )
             refined_end = self._find_end(disappear_frames, position, bbox)
 

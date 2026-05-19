@@ -128,6 +128,7 @@ class VLMClient:
             "3. CONTEXT/TONE FIX: If a translation is obviously out of character (e.g. childish character suddenly speaks formally), correct ONLY the tone to match the rest. Do NOT re-translate accurate lines.",
             "4. PRESERVE: Correct translations, accurate colors, and valid positions must remain untouched.",
             "5. RETURN: Output ONLY the corrected JSON array. Same keys: start, end, original, translated, color, position. No markdown, no commentary.",
+            "6. TIMING PRESERVATION: Do NOT modify start or end values. Timing has been precisely calibrated by frame-level analysis in a prior phase. Only fix text, color, and position.",
         ]
         if custom_prompt:
             prompt_lines.append(f"\nUser custom instructions:\n{custom_prompt}")

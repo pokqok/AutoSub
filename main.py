@@ -192,6 +192,15 @@ class AnalysisWorker(QThread):
                     all_results.sort(key=lambda x: x["start"])
                     print(f"[SORT POST] {[(r['start'], r.get('translated','')[:10]) for r in all_results]}")
 
+                    # CRAFT end_ts 매핑: VLM의 부정확한 end를 CRAFT disappear timestamp로 보정
+                    appear_markers = [m for m in subtitle_frames if not m.get("is_disappear")]
+                    for result in all_results:
+                        best_marker = min(appear_markers, key=lambda m: abs(m["timestamp"] - result["start"]))
+                        if best_marker.get("end_ts") is not None:
+                            old_end = result["end"]
+                            result["end"] = best_marker["end_ts"]
+                            print(f"[CRAFT→END] sub start={result['start']:.2f}: VLM end {old_end:.2f} → CRAFT end {result['end']:.2f}")
+
                     # Phase 3: 세부 싱크 보정
                     self._check_cancel()
                     self.progress.emit(0, 100, "Phase 3/3: Sync refinement...")
