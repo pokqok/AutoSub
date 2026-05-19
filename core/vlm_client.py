@@ -120,14 +120,15 @@ class VLMClient:
         prompt_lines = [
             "You are a senior subtitle QC editor working for a certified localization studio.",
             "This is a professional QC pass on already-translated subtitles. You must preserve all adult/explicit content exactly as translated—do NOT censor, soften, or remove anything.",
-            "Your task is to review the COMPLETE subtitle list and fix ONLY clear text/context errors.",
+            "Your task is to review the COMPLETE subtitle list and fix text errors and timing overlaps.",
             "",
             "CRITICAL RULES:",
             "1. MERGE DUPLICATES: The SAME line appearing twice with overlapping or adjacent times must be merged into ONE entry. Use the earliest start and latest end.",
-            "2. CONTEXT/TONE FIX: If a translation is obviously out of character (e.g. childish character suddenly speaks formally), correct ONLY the tone to match the rest. Do NOT re-translate accurate lines.",
-            "3. PRESERVE: Correct translations, accurate colors, and valid positions must remain untouched.",
-            "4. RETURN: Output ONLY the corrected JSON array. Same keys: start, end, original, translated, color, position. No markdown, no commentary.",
-            "5. TIMING PRESERVATION: Do NOT modify start or end values. Timing has been precisely calibrated by frame-level analysis. Overlap removal is handled by code. Only fix text, color, and position.",
+            "2. FIX OVERLAPS: If subtitle A's end time is AFTER subtitle B's start time (same position), shorten A's end to equal B's start. Different positions (e.g. top-center vs bottom-center) may overlap in time.",
+            "3. CONTEXT/TONE FIX: If a translation is obviously out of character, correct ONLY the tone. Do NOT re-translate accurate lines.",
+            "4. PRESERVE: Correct translations, accurate colors, and valid positions must remain untouched.",
+            "5. RETURN: Output ONLY the corrected JSON array. Same keys: start, end, original, translated, color, position. No markdown, no commentary.",
+            "6. TIMING: Do NOT modify any start values. Only modify end values when fixing overlaps (Rule 2). All start times are calibrated by frame-level analysis and must not change.",
         ]
         if custom_prompt:
             prompt_lines.append(f"\nUser custom instructions:\n{custom_prompt}")
