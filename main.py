@@ -194,13 +194,20 @@ class AnalysisWorker(QThread):
                     print(f"[SORT POST] {[(r['start'], r.get('translated','')[:10]) for r in all_results]}")
 
                     # CRAFT end_ts 매핑: VLM의 부정확한 end를 CRAFT disappear timestamp로 보정
+                    # 단, 다음 자막 start 이전으로 cap (연속 자막에서 동일 CRAFT end 방지)
                     appear_markers = [m for m in subtitle_frames if not m.get("is_disappear")]
-                    for result in all_results:
+                    for i_cr, result in enumerate(all_results):
                         best_marker = min(appear_markers, key=lambda m: abs(m["timestamp"] - result["start"]))
                         if best_marker.get("end_ts") is not None:
+                            craft_end = best_marker["end_ts"]
                             old_end = result["end"]
-                            result["end"] = best_marker["end_ts"]
-                            print(f"[CRAFT→END] sub start={result['start']:.2f}: VLM end {old_end:.2f} → CRAFT end {result['end']:.2f}")
+                            # 다음 자막이 있으면 CRAFT end를 next_start로 cap
+                            if i_cr + 1 < len(all_results):
+                                next_start = all_results[i_cr + 1]["start"]
+                                result["end"] = min(craft_end, next_start - 0.05)
+                            else:
+                                result["end"] = craft_end
+                            print(f"[CRAFT→END] sub start={result['start']:.2f}: VLM end {old_end:.2f} → CRAFT end {craft_end:.2f} → capped {result['end']:.2f}")
 
                     # Phase 3: 세부 싱크 보정
                     self._check_cancel()

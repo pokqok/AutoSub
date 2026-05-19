@@ -201,10 +201,6 @@ class SyncRefiner:
             # 탐색 실패 → VLM 원본 end 사용
             if refined_end is None:
                 refined_end = sub["end"]
-                print(f"[P3] sub {i}: end 탐색 실패, VLM end 사용 ({refined_end:.2f})")
-            else:
-                print(f"[P3] sub {i}: {original_start:.2f}~{sub['end']:.2f} "
-                      f"→ {refined_start:.2f}~{refined_end:.2f}")
 
             # ── 안전장치 ──
             # next_start 침범 방지
@@ -216,6 +212,19 @@ class SyncRefiner:
             # 범위 초과 방지
             refined_end = min(refined_end, max_t)
 
+            print(f"[P3] sub {i}: {original_start:.2f}~{sub['end']:.2f} "
+                  f"→ {refined_start:.2f}~{refined_end:.2f}")
+
             refined.append({**sub, "start": refined_start, "end": refined_end})
+
+        # ── 후처리: refined start 기준 겹침 최종 제거 ──
+        for i in range(len(refined) - 1):
+            if refined[i]["end"] > refined[i + 1]["start"]:
+                old = refined[i]["end"]
+                refined[i]["end"] = refined[i + 1]["start"] - 0.01
+                if refined[i]["end"] <= refined[i]["start"]:
+                    refined[i]["end"] = refined[i]["start"] + 0.1
+                print(f"[P3-POST] sub {i}: end {old:.2f} → {refined[i]['end']:.2f} "
+                      f"(next start={refined[i+1]['start']:.2f})")
 
         return refined
