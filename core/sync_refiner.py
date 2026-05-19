@@ -17,7 +17,7 @@ POSITION_ROI = {
 MAX_BBOX_RATIO = 0.20   # 화면 면적 20% 초과 bbox 무시
 MAX_SEARCH_SEC = 15.0   # end 탐색 최대 범위
 SPIKE_FACTOR   = 2.0    # baseline 대비 몇 배 이상이면 변화로 판정
-MIN_DIFF       = 3.0    # 절대 최소 diff (노이즈 제거)
+MIN_DIFF       = 0.5    # 절대 최소 diff (노이즈 제거) — 정적 구간 diff 수준에 맞게 조정
 
 
 class SyncRefiner:
