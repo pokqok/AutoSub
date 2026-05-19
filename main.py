@@ -212,17 +212,12 @@ class AnalysisWorker(QThread):
                         if best_marker.get("end_ts") is not None:
                             craft_end = best_marker["end_ts"]
                             old_end = result["end"]
-                            vlm_end = result["end"]
                             # 다음 자막이 있으면 CRAFT end를 next_start로 cap
                             if i_cr + 1 < len(all_results):
                                 next_start = all_results[i_cr + 1]["start"]
                                 result["end"] = min(craft_end, next_start - 0.05)
                             else:
                                 result["end"] = craft_end
-                            # CRAFT end가 VLM end보다 5초 이상 길면 → VLM end 우선
-                            # (하나의 CRAFT 블록에 여러 자막이 있을 때 과다 확장 방지)
-                            if result["end"] > vlm_end + 5.0:
-                                result["end"] = vlm_end
                             print(f"[CRAFT→END] sub[{i_cr}] start={result['start']:.2f} → marker t={best_marker['timestamp']:.2f} (dist={dist:.2f}), "
                                   f"VLM end={old_end:.2f}, CRAFT end_ts={craft_end:.2f}, final end={result['end']:.2f}")
                         else:
