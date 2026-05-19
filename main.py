@@ -118,30 +118,21 @@ class AnalysisWorker(QThread):
                         self.log.emit(f"  -> WARNING: No subtitle frames detected in {os.path.basename(video_path)}.")
                         continue
 
-                    # Phase 1 end_ts 매핑: 각 appear 마커의 end = 다음 이벤트(appear/disappear) 시점
-                    # 자막 변화(A→B)도 A의 종료를 의미하므로 disappear만이 아닌 다음 마커를 end로 사용
-                    appear_only = [m for m in subtitle_frames if not m.get("is_disappear")]
-                    for idx_m, marker in enumerate(appear_only):
-                        if idx_m + 1 < len(appear_only):
-                            # 다음 appear 마커의 timestamp = 현재 자막이 바뀌는 시점
-                            next_appear_ts = appear_only[idx_m + 1]["timestamp"]
-                        else:
-                            next_appear_ts = None
-
-                        # 다음 disappear 프레임 찾기 (전체 subtitle_frames에서)
-                        global_idx = subtitle_frames.index(marker)
-                        next_disappear_ts = None
-                        for j in range(global_idx + 1, len(subtitle_frames)):
+                    # Phase 1 end_ts 매핑: 각 appear 마커의 end = 다음 disappear 시점
+                    # (CRAFT가 같은 자막을 매초 새 appear로 잡으므로 next appear를 end로 쓰면 안 됨)
+                    for i_m, marker in enumerate(subtitle_frames):
+                        if marker.get("is_disappear"):
+                            continue
+                        end_ts = None
+                        for j in range(i_m + 1, len(subtitle_frames)):
                             if subtitle_frames[j].get("is_disappear"):
-                                next_disappear_ts = subtitle_frames[j]["timestamp"]
+                                end_ts = subtitle_frames[j]["timestamp"]
                                 break
-
-                        # end_ts = 다음 이벤트 중 먼저 오는 것
-                        candidates = [t for t in [next_appear_ts, next_disappear_ts] if t is not None]
-                        marker["end_ts"] = min(candidates) if candidates else None
+                        marker["end_ts"] = end_ts
 
                     # ── 진단 로그: CRAFT 마커 전체 목록 ──
-                    print(f"\n[CRAFT MARKERS] Total: {len(subtitle_frames)} (appear: {len(appear_only)}, disappear: {len(subtitle_frames) - len(appear_only)})")
+                    n_appear = sum(1 for m in subtitle_frames if not m.get("is_disappear"))
+                    print(f"\n[CRAFT MARKERS] Total: {len(subtitle_frames)} (appear: {n_appear}, disappear: {len(subtitle_frames) - n_appear})")
                     for m in subtitle_frames:
                         kind = "DISAPPEAR" if m.get("is_disappear") else "APPEAR"
                         end_info = f", end_ts={m.get('end_ts', 'N/A')}" if not m.get("is_disappear") else ""
