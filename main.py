@@ -62,6 +62,9 @@ class AnalysisWorker(QThread):
             model_name = self.settings.get('model_name', 'gemini-3-flash-preview:cloud')
             base_url = self.settings.get('base_url', '')
             custom_prompt = self.settings.get('custom_prompt', '')
+            translator_note = self.settings.get('translator_note', '')
+            if translator_note:
+                custom_prompt += f"\n\n[Translator's Note (Context & Glossary)]\n{translator_note}"
 
             if not api_key:
                 self.error.emit("API Key is missing!")
@@ -428,21 +431,20 @@ class SubtitleVLMApp(QMainWindow):
         self.prompt_input.setMaximumHeight(100)
         settings_group.addWidget(self.prompt_input)
 
-        settings_group.addWidget(QLabel("Glossary (Key=Value, one per line):"))
-        self.glossary_input = QTextEdit()
-        glossary_text = "\n".join([f"{k}={v}" for k, v in self.settings.get('glossary', {}).items()])
-        self.glossary_input.setPlainText(glossary_text)
-        self.glossary_input.setMaximumHeight(100)
-        settings_group.addWidget(self.glossary_input)
+        settings_group.addWidget(QLabel("Translator's Note (Context/Expressions for VLM):"))
+        self.translator_note_input = QTextEdit()
+        self.translator_note_input.setPlainText(self.settings.get('translator_note', ''))
+        self.translator_note_input.setMaximumHeight(100)
+        settings_group.addWidget(self.translator_note_input)
         
-        glossary_btns = QHBoxLayout()
-        btn_load_glossary = QPushButton("Load Glossary File")
-        btn_load_glossary.clicked.connect(self.load_glossary_file)
-        btn_save_glossary = QPushButton("Save Glossary File")
-        btn_save_glossary.clicked.connect(self.save_glossary_file)
-        glossary_btns.addWidget(btn_load_glossary)
-        glossary_btns.addWidget(btn_save_glossary)
-        settings_group.addLayout(glossary_btns)
+        note_btns = QHBoxLayout()
+        btn_load_note = QPushButton("Load Note File")
+        btn_load_note.clicked.connect(self.load_note_file)
+        btn_save_note = QPushButton("Save Note File")
+        btn_save_note.clicked.connect(self.save_note_file)
+        note_btns.addWidget(btn_load_note)
+        note_btns.addWidget(btn_save_note)
+        settings_group.addLayout(note_btns)
         
         # 출력 포맷 선택 (Start 버튼 위에 배치)
         fmt_layout = QHBoxLayout()
@@ -585,40 +587,24 @@ class SubtitleVLMApp(QMainWindow):
         for item in selected_items:
             self.video_list_widget.takeItem(self.video_list_widget.row(item))
 
-    def load_glossary_file(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Open Glossary File", "", "Text Files (*.txt);;JSON Files (*.json)")
+    def load_note_file(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Open Translator Note", "", "Text Files (*.txt);;All Files (*)")
         if not path: return
         try:
-            if path.endswith('.json'):
-                with open(path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    if isinstance(data, dict):
-                        text = "\n".join([f"{k}={v}" for k, v in data.items()])
-                        self.glossary_input.setPlainText(text)
-            else:
-                with open(path, 'r', encoding='utf-8') as f:
-                    self.glossary_input.setPlainText(f.read())
+            with open(path, 'r', encoding='utf-8') as f:
+                self.translator_note_input.setPlainText(f.read())
         except Exception as e:
-            self.log_window.append(f"Error loading glossary: {e}")
+            self.log_window.append(f"Error loading note: {e}")
 
-    def save_glossary_file(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Save Glossary File", "", "Text Files (*.txt);;JSON Files (*.json)")
+    def save_note_file(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Save Translator Note", "", "Text Files (*.txt);;All Files (*)")
         if not path: return
         try:
-            text = self.glossary_input.toPlainText()
-            if path.endswith('.json'):
-                glossary = {}
-                for line in text.split('\n'):
-                    if '=' in line:
-                        k, v = line.split('=', 1)
-                        glossary[k.strip()] = v.strip()
-                with open(path, 'w', encoding='utf-8') as f:
-                    json.dump(glossary, f, ensure_ascii=False, indent=2)
-            else:
-                with open(path, 'w', encoding='utf-8') as f:
-                    f.write(text)
+            text = self.translator_note_input.toPlainText()
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(text)
         except Exception as e:
-            self.log_window.append(f"Error saving glossary: {e}")
+            self.log_window.append(f"Error saving note: {e}")
 
     def _refresh_presets(self):
         """presets.json에서 프리셋 목록을 불러와 콤보박스에 채움"""
@@ -878,12 +864,9 @@ class SubtitleVLMApp(QMainWindow):
         fmt = self.review_format_combo.currentText()
         
         final_subs = []
-        glossary = self.settings.get('glossary', {})
         
         for i in range(self.edit_table.rowCount()):
             text = self.edit_table.item(i, 3).text()
-            for k, v in glossary.items():
-                text = text.replace(k, v)
                 
             final_subs.append({
                 "start": float(self.edit_table.item(i, 0).text()),
