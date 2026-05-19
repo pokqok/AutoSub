@@ -212,12 +212,17 @@ class AnalysisWorker(QThread):
                         if best_marker.get("end_ts") is not None:
                             craft_end = best_marker["end_ts"]
                             old_end = result["end"]
+                            vlm_end = result["end"]
                             # 다음 자막이 있으면 CRAFT end를 next_start로 cap
                             if i_cr + 1 < len(all_results):
                                 next_start = all_results[i_cr + 1]["start"]
                                 result["end"] = min(craft_end, next_start - 0.05)
                             else:
                                 result["end"] = craft_end
+                            # CRAFT end가 VLM end보다 5초 이상 길면 → VLM end 우선
+                            # (하나의 CRAFT 블록에 여러 자막이 있을 때 과다 확장 방지)
+                            if result["end"] > vlm_end + 5.0:
+                                result["end"] = vlm_end
                             print(f"[CRAFT→END] sub[{i_cr}] start={result['start']:.2f} → marker t={best_marker['timestamp']:.2f} (dist={dist:.2f}), "
                                   f"VLM end={old_end:.2f}, CRAFT end_ts={craft_end:.2f}, final end={result['end']:.2f}")
                         else:
@@ -225,30 +230,30 @@ class AnalysisWorker(QThread):
                                   f"NO end_ts, keeping VLM end={result['end']:.2f}")
 
                     # CRAFT gap 기반 start 보정: VLM이 start를 너무 늦게 잡은 경우
-                    # sub[i].end와 sub[i+1].start 사이 gap이 2초 이상이고,
-                    # 그 gap에 CRAFT disappear→appear 전환이 있으면 start를 당김
-                    disappear_times = sorted([m["timestamp"] for m in subtitle_frames if m.get("is_disappear")])
+                    # 같은 CRAFT 블록(end_ts 동일) 내의 더 이른 appear로만 당김
                     for i_gap in range(len(all_results) - 1):
                         gap_start = all_results[i_gap]["end"]
                         gap_end = all_results[i_gap + 1]["start"]
                         gap_size = gap_end - gap_start
                         if gap_size < 2.0:
                             continue
-                        # gap 안에 disappear가 있는지 (이전 자막이 실제로 사라졌는지)
-                        has_disappear = any(gap_start - 1.0 <= dt <= gap_end for dt in disappear_times)
-                        if not has_disappear:
+                        # 현재 자막이 매칭된 CRAFT 마커의 end_ts 찾기
+                        next_sub_start = all_results[i_gap + 1]["start"]
+                        matched_marker = min(appear_markers, key=lambda m: abs(m["timestamp"] - next_sub_start))
+                        target_end_ts = matched_marker.get("end_ts")
+                        if target_end_ts is None:
                             continue
-                        # gap 안에서 가장 이른 appear 마커 찾기
-                        first_appear = None
+                        # gap 안에서 같은 end_ts를 가진 가장 이른 appear 찾기
+                        first_same_block = None
                         for m in appear_markers:
-                            if gap_start <= m["timestamp"] <= gap_end:
-                                if first_appear is None or m["timestamp"] < first_appear:
-                                    first_appear = m["timestamp"]
-                        if first_appear is not None and first_appear < all_results[i_gap + 1]["start"]:
+                            if gap_start <= m["timestamp"] < gap_end and m.get("end_ts") == target_end_ts:
+                                if first_same_block is None or m["timestamp"] < first_same_block:
+                                    first_same_block = m["timestamp"]
+                        if first_same_block is not None and first_same_block < next_sub_start:
                             old_start = all_results[i_gap + 1]["start"]
-                            all_results[i_gap + 1]["start"] = first_appear
-                            print(f"[GAP-FIX] sub[{i_gap+1}] start {old_start:.2f} → {first_appear:.2f} "
-                                  f"(gap={gap_size:.1f}s, CRAFT appear in gap)")
+                            all_results[i_gap + 1]["start"] = first_same_block
+                            print(f"[GAP-FIX] sub[{i_gap+1}] start {old_start:.2f} → {first_same_block:.2f} "
+                                  f"(gap={gap_size:.1f}s, same block end_ts={target_end_ts:.1f})")
 
                     # Phase 3: 세부 싱크 보정
                     self._check_cancel()
