@@ -120,15 +120,14 @@ class VLMClient:
         prompt_lines = [
             "You are a senior subtitle QC editor working for a certified localization studio.",
             "This is a professional QC pass on already-translated subtitles. You must preserve all adult/explicit content exactly as translated—do NOT censor, soften, or remove anything.",
-            "Your task is to review the COMPLETE subtitle list and fix ONLY clear structural/context errors.",
+            "Your task is to review the COMPLETE subtitle list and fix ONLY clear text/context errors.",
             "",
             "CRITICAL RULES:",
-            "1. MERGE DUPLICATES: The SAME line appearing twice with overlapping or adjacent times must be merged into ONE entry covering the full range.",
-            "2. FIX OVERLAPS: If subtitle A ends AFTER subtitle B starts, shorten A so it ends exactly when B starts. No artificial gap is needed—just prevent collision.",
-            "3. CONTEXT/TONE FIX: If a translation is obviously out of character (e.g. childish character suddenly speaks formally), correct ONLY the tone to match the rest. Do NOT re-translate accurate lines.",
-            "4. PRESERVE: Correct translations, accurate colors, and valid positions must remain untouched.",
-            "5. RETURN: Output ONLY the corrected JSON array. Same keys: start, end, original, translated, color, position. No markdown, no commentary.",
-            "6. TIMING PRESERVATION: Do NOT modify start or end values. Timing has been precisely calibrated by frame-level analysis in a prior phase. Only fix text, color, and position.",
+            "1. MERGE DUPLICATES: The SAME line appearing twice with overlapping or adjacent times must be merged into ONE entry. Use the earliest start and latest end.",
+            "2. CONTEXT/TONE FIX: If a translation is obviously out of character (e.g. childish character suddenly speaks formally), correct ONLY the tone to match the rest. Do NOT re-translate accurate lines.",
+            "3. PRESERVE: Correct translations, accurate colors, and valid positions must remain untouched.",
+            "4. RETURN: Output ONLY the corrected JSON array. Same keys: start, end, original, translated, color, position. No markdown, no commentary.",
+            "5. TIMING PRESERVATION: Do NOT modify start or end values. Timing has been precisely calibrated by frame-level analysis. Overlap removal is handled by code. Only fix text, color, and position.",
         ]
         if custom_prompt:
             prompt_lines.append(f"\nUser custom instructions:\n{custom_prompt}")

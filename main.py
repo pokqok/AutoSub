@@ -46,6 +46,32 @@ class AnalysisWorker(QThread):
         if self._cancel:
             raise InterruptedError(msg)
 
+    @staticmethod
+    def _remove_overlaps(subtitles: list) -> list:
+        """같은 position 자막끼리 시간 겹침을 코드 레벨에서 제거.
+        앞 자막의 end를 뒤 자막의 start로 잘라줌."""
+        if not subtitles or len(subtitles) < 2:
+            return subtitles
+        subs = sorted(subtitles, key=lambda s: s["start"])
+        fixed = 0
+        for i in range(len(subs) - 1):
+            for j in range(i + 1, len(subs)):
+                # 같은 position일 때만 겹침 방지 (다른 position은 동시 표시 가능)
+                if subs[i].get("position") != subs[j].get("position"):
+                    continue
+                if subs[i]["end"] > subs[j]["start"]:
+                    old_end = subs[i]["end"]
+                    subs[i]["end"] = subs[j]["start"] - 0.01
+                    # 최소 길이 보장
+                    if subs[i]["end"] <= subs[i]["start"]:
+                        subs[i]["end"] = subs[i]["start"] + 0.1
+                    fixed += 1
+                    print(f"[OVERLAP FIX] sub {i}: end {old_end:.2f} -> {subs[i]['end']:.2f} (next start={subs[j]['start']:.2f})")
+                break  # 가장 가까운 같은 position만 체크
+        if fixed:
+            print(f"[OVERLAP FIX] Total {fixed} overlaps fixed")
+        return subs
+
     def _cleanup_temp_dir(self, temp_dir: str):
         """영상별 임시 폴더 정리"""
         if temp_dir and os.path.exists(temp_dir):
@@ -231,6 +257,10 @@ class AnalysisWorker(QThread):
                     except Exception as e:
                         self.log.emit(f"  -> WARNING: Post-review failed, keeping Phase 3 result: {str(e)}")
                         self.progress.emit(100, 100, "Phase 4/4: Skipped")
+
+                    # Phase 5: 코드 레벨 겹침 제거 (LLM에 의존하지 않음)
+                    final_results = self._remove_overlaps(final_results)
+                    self.log.emit("  -> Overlap removal complete.")
 
                     # Save
                     self._check_cancel()
