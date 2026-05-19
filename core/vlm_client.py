@@ -224,7 +224,7 @@ class VLMClient:
             "CRITICAL DISTINCTION RULES — You must tell these three cases apart:",
             "7. STREAMING SUBTITLES → KEEP SEPARATE: If Japanese text grows by APPENDING characters at the end across consecutive frames (e.g. \"あ…\" → \"あ…っ\" → \"あ…っ…ん\" or \"先生が\" → \"先生が今\" → \"先生が今回\"), these are intentional streaming/typing subtitles. Output EACH stage as a SEPARATE subtitle entry. NEVER merge them.",
             "8. EXACT DUPLICATES → MERGE: If the EXACT SAME completed Japanese sentence appears across multiple frames with NO visible text change, output it only ONCE.",
-            "9. SIMILAR-BUT-DIFFERENT / OCR JUMP → PICK BEST: If frames show Japanese text that is mostly similar but has slight unrelated differences (NOT progressive end-appending), this is an OCR inconsistency. Pick the most complete and accurate version and output it ONCE. Do NOT output two slightly different versions of the same line.",
+            "9. SIMILAR-BUT-DIFFERENT / OCR JUMP → PICK BEST: If frames show Japanese text that is mostly similar but has slight unrelated differences (NOT progressive end-appending), this is an OCR inconsistency. Pick the most complete and accurate version and output it ONCE. Do NOT output two slightly different versions of the same line. 단, 기존 텍스트 아래에 새 줄이 추가된 경우(멀티 화자 또는 새 대사 추가)는 Rule 7과 동일하게 STREAMING으로 처리하여 각각 별도 출력.",
             "10. TIMING: Short single-utterance lines (single moans) must have max 0.8s duration. Do NOT stretch them.",
             "",
             "Output: Return ONLY a valid JSON array. Absolutely no markdown code blocks, no explanations, no greetings, no commentary.",
