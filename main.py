@@ -268,11 +268,6 @@ class AnalysisWorker(QThread):
                                 if first_same_block is None or m["timestamp"] < first_same_block:
                                     first_same_block = m["timestamp"]
                         if first_same_block is not None and first_same_block < next_sub_start:
-                            # 이전 자막의 원본 VLM end 이전으로는 당기지 않음
-                            prev_vlm_end = all_results[i_gap].get("vlm_end", all_results[i_gap]["end"])
-                            if first_same_block < prev_vlm_end:
-                                print(f"[GAP-FIX] sub[{i_gap+1}] SKIP: appear {first_same_block:.2f} < prev vlm_end {prev_vlm_end:.2f}")
-                                continue
                             old_start = all_results[i_gap + 1]["start"]
                             all_results[i_gap + 1]["start"] = first_same_block
                             print(f"[GAP-FIX] sub[{i_gap+1}] start {old_start:.2f} → {first_same_block:.2f} "
