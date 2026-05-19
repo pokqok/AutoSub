@@ -150,18 +150,24 @@ class AnalysisWorker(QThread):
                         if ets is not None:
                             block_map.setdefault(ets, []).append(m)
 
-                    # 블록별 첫 appear만 dense 대상으로
+                    # 블록별 대표 마커: 첫 appear + 간격 2초 이상인 appear도 포함
+                    # (블록 내 자막 전환 시점에 dense 프레임 확보)
                     block_representatives = []
                     for ets in sorted(block_map.keys()):
                         markers_in_block = sorted(block_map[ets], key=lambda x: x["timestamp"])
-                        first = markers_in_block[0]
-                        block_representatives.append(first)
+                        block_representatives.append(markers_in_block[0])  # 블록 시작
+                        last_added = markers_in_block[0]["timestamp"]
+                        for m in markers_in_block[1:]:
+                            if m["timestamp"] - last_added >= 2.0:
+                                block_representatives.append(m)
+                                last_added = m["timestamp"]
 
-                    n_blocks = len(block_representatives)
+                    n_blocks = len(block_map)
+                    n_dense = len(block_representatives)
                     n_orig = sum(1 for m in subtitle_frames if not m.get("is_disappear"))
-                    print(f"[BLOCK GROUP] {n_orig} appear markers → {n_blocks} blocks")
+                    print(f"[BLOCK GROUP] {n_orig} appear markers → {n_blocks} blocks, {n_dense} dense markers")
 
-                    # Dense frames: 블록 대표만 사용 (183→~19)
+                    # Dense frames: 블록 대표 + 간격 2초 이상 마커
                     self._check_cancel()
                     self.log.emit("  -> Extracting dense frames for sync refinement...")
 
