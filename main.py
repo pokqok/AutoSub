@@ -224,6 +224,32 @@ class AnalysisWorker(QThread):
                             print(f"[CRAFT→END] sub[{i_cr}] start={result['start']:.2f} → marker t={best_marker['timestamp']:.2f} (dist={dist:.2f}), "
                                   f"NO end_ts, keeping VLM end={result['end']:.2f}")
 
+                    # CRAFT gap 기반 start 보정: VLM이 start를 너무 늦게 잡은 경우
+                    # sub[i].end와 sub[i+1].start 사이 gap이 2초 이상이고,
+                    # 그 gap에 CRAFT disappear→appear 전환이 있으면 start를 당김
+                    disappear_times = sorted([m["timestamp"] for m in subtitle_frames if m.get("is_disappear")])
+                    for i_gap in range(len(all_results) - 1):
+                        gap_start = all_results[i_gap]["end"]
+                        gap_end = all_results[i_gap + 1]["start"]
+                        gap_size = gap_end - gap_start
+                        if gap_size < 2.0:
+                            continue
+                        # gap 안에 disappear가 있는지 (이전 자막이 실제로 사라졌는지)
+                        has_disappear = any(gap_start - 1.0 <= dt <= gap_end for dt in disappear_times)
+                        if not has_disappear:
+                            continue
+                        # gap 안에서 가장 이른 appear 마커 찾기
+                        first_appear = None
+                        for m in appear_markers:
+                            if gap_start <= m["timestamp"] <= gap_end:
+                                if first_appear is None or m["timestamp"] < first_appear:
+                                    first_appear = m["timestamp"]
+                        if first_appear is not None and first_appear < all_results[i_gap + 1]["start"]:
+                            old_start = all_results[i_gap + 1]["start"]
+                            all_results[i_gap + 1]["start"] = first_appear
+                            print(f"[GAP-FIX] sub[{i_gap+1}] start {old_start:.2f} → {first_appear:.2f} "
+                                  f"(gap={gap_size:.1f}s, CRAFT appear in gap)")
+
                     # Phase 3: 세부 싱크 보정
                     self._check_cancel()
                     self.progress.emit(0, 100, "Phase 3/3: Sync refinement...")
