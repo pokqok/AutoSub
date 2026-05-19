@@ -97,6 +97,7 @@ class SyncRefiner:
         baseline(초반 안정 구간) 대비 spike_factor 배 이상 → 변화 시점.
         """
         if len(frames) < 2:
+            print(f"[FIND_END] frames 부족: {len(frames)}개")
             return None
 
         diffs = []
@@ -106,20 +107,17 @@ class SyncRefiner:
             d = self._frame_diff(roi1, roi2)
             diffs.append((frames[i]["timestamp"], d))
 
-        if not diffs:
-            return None
-
-        # baseline: 전체 diff의 median (이상치에 강건)
-        baseline_vals = [d for _, d in diffs]
-        baseline = max(float(np.median(baseline_vals)), MIN_DIFF)
+        baseline = max(float(np.percentile([d for _, d in diffs], 25)), MIN_DIFF)
         threshold = baseline * self.spike_factor
 
-        # 첫 번째 spike 시점 = 자막 사라지는 순간
+        # 로그 추가
+        print(f"[FIND_END] frames={len(frames)}, baseline={baseline:.2f}, threshold={threshold:.2f}")
+        print(f"[FIND_END] diffs={[(f'{t:.2f}', f'{d:.2f}') for t, d in diffs]}")
+
         for ts, d in diffs:
             if d >= threshold:
                 return ts
-
-        return None  # spike 없음 → 탐색 실패
+        return None
 
     def _find_start(self, frames: List[Dict], position, bbox,
                     original_start: float) -> Optional[float]:

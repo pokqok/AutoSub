@@ -226,6 +226,7 @@ class VLMClient:
             "8. EXACT DUPLICATES → MERGE: If the EXACT SAME completed Japanese sentence appears across multiple frames with NO visible text change, output it only ONCE.",
             "9. SIMILAR-BUT-DIFFERENT / OCR JUMP → PICK BEST: If frames show Japanese text that is mostly similar but has slight unrelated differences (NOT progressive end-appending), this is an OCR inconsistency. Pick the most complete and accurate version and output it ONCE. Do NOT output two slightly different versions of the same line. 단, 기존 텍스트 아래에 새 줄이 추가된 경우(멀티 화자 또는 새 대사 추가)는 Rule 7과 동일하게 STREAMING으로 처리하여 각각 별도 출력.",
             "10. TIMING: Short single-utterance lines (single moans) must have max 0.8s duration. Do NOT stretch them.",
+            "11. MULTI-SPEAKER: If multiple characters speak in the same frame, output each as a SEPARATE entry with the same frame_index. Each entry must have its own color and position.",
             "",
             "Output: Return ONLY a valid JSON array. Absolutely no markdown code blocks, no explanations, no greetings, no commentary.",
             "Each entry in the array must include:",
