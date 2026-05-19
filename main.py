@@ -181,19 +181,17 @@ class AnalysisWorker(QThread):
                     all_frames_for_sync = subtitle_frames + dense_frames
                     all_frames_for_sync.sort(key=lambda x: x["timestamp"])
 
-                    # Phase 2: VLM 배치 분석 — 블록 대표 + disappear 프레임만 전송
-                    block_and_disappear = block_representatives + [m for m in subtitle_frames if m.get("is_disappear")]
-                    block_and_disappear.sort(key=lambda x: x["timestamp"])
+                    # Phase 2: VLM 배치 분석 — 전체 프레임 전송 (블록 내 자막 변화 감지 필요)
                     self._check_cancel()
                     self.progress.emit(0, 100, f"Phase 2/3: VLM batch analysis...")
-                    self.log.emit(f"  Phase 2/3: VLM batch analysis with '{model_name}' ({len(block_and_disappear)} frames, was {len(subtitle_frames)})...")
+                    self.log.emit(f"  Phase 2/3: VLM batch analysis with '{model_name}'...")
                     BATCH_SIZE = 10
                     all_results = []
-                    total_batches = (len(block_and_disappear) + BATCH_SIZE - 1) // BATCH_SIZE
+                    total_batches = (len(subtitle_frames) + BATCH_SIZE - 1) // BATCH_SIZE
 
-                    for b_idx in range(0, len(block_and_disappear), BATCH_SIZE):
+                    for b_idx in range(0, len(subtitle_frames), BATCH_SIZE):
                         self._check_cancel()
-                        batch = block_and_disappear[b_idx:b_idx + BATCH_SIZE]
+                        batch = subtitle_frames[b_idx:b_idx + BATCH_SIZE]
                         batch_num = b_idx // BATCH_SIZE + 1
                         self.log.emit(f"  -> Batch {batch_num}/{total_batches} ({len(batch)} frames)")
 
