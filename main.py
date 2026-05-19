@@ -167,25 +167,7 @@ class AnalysisWorker(QThread):
                     n_orig = sum(1 for m in subtitle_frames if not m.get("is_disappear"))
                     print(f"[BLOCK GROUP] {n_orig} appear markers → {n_blocks} blocks, {n_dense} dense markers")
 
-                    # Dense frames: 블록 대표 + 간격 2초 이상 마커
-                    self._check_cancel()
-                    self.log.emit("  -> Extracting dense frames for sync refinement...")
-
-                    def dense_progress(curr, total):
-                        self._check_cancel()
-                        pct = 90 + int(curr / total * 10)
-                        self.progress.emit(pct, 100, f"Phase 1/3: Dense frames {curr}/{total}")
-
-                    dense_markers = block_representatives
-                    dense_frames = frame_filter.extract_dense_frames(
-                        video_path, dense_markers, temp_dir,
-                        window_sec=1.5,
-                        progress_callback=dense_progress
-                    )
-                    self.log.emit(f"  -> Dense frames: {len(dense_frames)} (from {n_blocks} blocks, was {n_orig} markers)")
-                    self.progress.emit(100, 100, f"Phase 1/3: Done ({n_blocks} blocks, {len(dense_frames)} dense)")
-                    all_frames_for_sync = subtitle_frames + dense_frames
-                    all_frames_for_sync.sort(key=lambda x: x["timestamp"])
+                    self.progress.emit(100, 100, f"Phase 1/3: Done ({n_blocks} blocks)")
 
                     # Phase 2: VLM 배치 분석 — 전체 프레임 전송 (블록 내 자막 변화 감지 필요)
                     self._check_cancel()
@@ -278,6 +260,32 @@ class AnalysisWorker(QThread):
                             all_results[i_gap + 1]["start"] = first_same_block
                             print(f"[GAP-FIX] sub[{i_gap+1}] start {old_start:.2f} → {first_same_block:.2f} "
                                   f"(gap={gap_size:.1f}s, same block end_ts={target_end_ts:.1f})")
+
+                    # Phase 3 직전: VLM 결과를 기반으로 Dense 추출 (정확한 P3 보정용)
+                    self._check_cancel()
+                    self.log.emit("  -> Extracting dense frames for sync refinement based on VLM results...")
+                    
+                    def dense_progress(curr, total):
+                        self._check_cancel()
+                        pct = int(curr / total * 100)
+                        self.progress.emit(pct, 100, f"Phase 3 Prep: Dense frames {curr}/{total}")
+                    
+                    dense_markers = []
+                    for sub in all_results:
+                        dense_markers.append({
+                            "timestamp": sub["start"],
+                            "end_ts": sub["end"],
+                            "bbox": sub.get("bbox")
+                        })
+                    
+                    dense_frames = frame_filter.extract_dense_frames(
+                        video_path, dense_markers, temp_dir,
+                        window_sec=1.5,
+                        progress_callback=dense_progress
+                    )
+                    self.log.emit(f"  -> Dense frames generated: {len(dense_frames)}")
+                    all_frames_for_sync = subtitle_frames + dense_frames
+                    all_frames_for_sync.sort(key=lambda x: x["timestamp"])
 
                     # Phase 3: 세부 싱크 보정
                     self._check_cancel()
