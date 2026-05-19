@@ -139,37 +139,61 @@ class AnalysisWorker(QThread):
                         print(f"  [{kind}] t={m['timestamp']:.2f}{end_info}")
                     print()
 
-                    # Dense frames for Phase 3 sync refinement
+                    # ── 블록 그룹핑: end_ts 기준으로 appear 마커를 블록으로 묶기 ──
+                    # 같은 end_ts를 가진 appear = 같은 텍스트 블록
+                    # 블록별 첫 appear + disappear만 남기면 183→~38개로 감소
+                    block_map = {}  # end_ts -> list of appear markers
+                    for m in subtitle_frames:
+                        if m.get("is_disappear"):
+                            continue
+                        ets = m.get("end_ts")
+                        if ets is not None:
+                            block_map.setdefault(ets, []).append(m)
+
+                    # 블록별 첫 appear만 dense 대상으로
+                    block_representatives = []
+                    for ets in sorted(block_map.keys()):
+                        markers_in_block = sorted(block_map[ets], key=lambda x: x["timestamp"])
+                        first = markers_in_block[0]
+                        block_representatives.append(first)
+
+                    n_blocks = len(block_representatives)
+                    n_orig = sum(1 for m in subtitle_frames if not m.get("is_disappear"))
+                    print(f"[BLOCK GROUP] {n_orig} appear markers → {n_blocks} blocks")
+
+                    # Dense frames: 블록 대표만 사용 (183→~19)
                     self._check_cancel()
-                    self.log.emit("  -> Extracting dense frames (start-1.5s ~ end+1.5s @ 0.1s) for sync refinement...")
-                    
+                    self.log.emit("  -> Extracting dense frames for sync refinement...")
+
                     def dense_progress(curr, total):
                         self._check_cancel()
                         pct = 90 + int(curr / total * 10)
                         self.progress.emit(pct, 100, f"Phase 1/3: Dense frames {curr}/{total}")
-                    
-                    dense_markers = [m for m in subtitle_frames if not m.get("is_disappear")]
+
+                    dense_markers = block_representatives
                     dense_frames = frame_filter.extract_dense_frames(
                         video_path, dense_markers, temp_dir,
                         window_sec=1.5,
                         progress_callback=dense_progress
                     )
-                    self.log.emit(f"  -> Dense frames: {len(dense_frames)}")
-                    self.progress.emit(100, 100, f"Phase 1/3: Done ({len(subtitle_frames)} frames, {len(dense_frames)} dense)")
+                    self.log.emit(f"  -> Dense frames: {len(dense_frames)} (from {n_blocks} blocks, was {n_orig} markers)")
+                    self.progress.emit(100, 100, f"Phase 1/3: Done ({n_blocks} blocks, {len(dense_frames)} dense)")
                     all_frames_for_sync = subtitle_frames + dense_frames
                     all_frames_for_sync.sort(key=lambda x: x["timestamp"])
 
-                    # Phase 2: VLM 배치 분석
+                    # Phase 2: VLM 배치 분석 — 블록 대표 + disappear 프레임만 전송
+                    block_and_disappear = block_representatives + [m for m in subtitle_frames if m.get("is_disappear")]
+                    block_and_disappear.sort(key=lambda x: x["timestamp"])
                     self._check_cancel()
                     self.progress.emit(0, 100, f"Phase 2/3: VLM batch analysis...")
-                    self.log.emit(f"  Phase 2/3: VLM batch analysis with '{model_name}'...")
+                    self.log.emit(f"  Phase 2/3: VLM batch analysis with '{model_name}' ({len(block_and_disappear)} frames, was {len(subtitle_frames)})...")
                     BATCH_SIZE = 10
                     all_results = []
-                    total_batches = (len(subtitle_frames) + BATCH_SIZE - 1) // BATCH_SIZE
+                    total_batches = (len(block_and_disappear) + BATCH_SIZE - 1) // BATCH_SIZE
 
-                    for b_idx in range(0, len(subtitle_frames), BATCH_SIZE):
+                    for b_idx in range(0, len(block_and_disappear), BATCH_SIZE):
                         self._check_cancel()
-                        batch = subtitle_frames[b_idx:b_idx + BATCH_SIZE]
+                        batch = block_and_disappear[b_idx:b_idx + BATCH_SIZE]
                         batch_num = b_idx // BATCH_SIZE + 1
                         self.log.emit(f"  -> Batch {batch_num}/{total_batches} ({len(batch)} frames)")
 
