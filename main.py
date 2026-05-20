@@ -275,11 +275,24 @@ class AnalysisWorker(QThread):
                     
                     dense_markers = []
                     for sub in all_results:
+                        sub_vlm_end = sub.get("vlm_end", sub["end"])
+                        sub_craft_end = sub["end"]
+                        bbox = sub.get("bbox")
+                        
+                        # CRAFT end 기준 마커 (항상 추가)
                         dense_markers.append({
                             "timestamp": sub["start"],
-                            "end_ts": sub["end"],
-                            "bbox": sub.get("bbox")
+                            "end_ts": sub_craft_end,
+                            "bbox": bbox
                         })
+                        # VLM end와 CRAFT end가 2초 이상 차이나면
+                        # VLM end 근처에도 별도 dense 프레임 필요
+                        if abs(sub_craft_end - sub_vlm_end) >= 2.0:
+                            dense_markers.append({
+                                "timestamp": sub_vlm_end,
+                                "end_ts": sub_vlm_end,
+                                "bbox": bbox
+                            })
                     
                     dense_frames = frame_filter.extract_dense_frames(
                         video_path, dense_markers, temp_dir,
