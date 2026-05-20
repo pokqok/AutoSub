@@ -29,15 +29,15 @@ class SubtitleExporter:
 
     @staticmethod
     def _calc_fontsize(sub: Dict, playresy: int = 1080) -> int:
-        """원래 자막 bbox 높이를 기반으로 ASS \\fs 태그 크기 계산."""
+        """원래 자막 bbox 높이를 기반으로 ASS \fs 태그 크기 계산."""
         bbox = sub.get('bbox')
         orig_h = sub.get('orig_h', 1080)
         if bbox and len(bbox) == 4:
             h = bbox[3] - bbox[1]
             scale = playresy / orig_h
             fontsize = int(h * scale * 1.0)
-            return max(18, min(72, fontsize))
-        return 24
+            return max(24, min(72, fontsize))
+        return 48
 
     def generate_srt(self, subtitles: List[Dict], output_path: str):
         with open(output_path, "w", encoding="utf-8") as f:
@@ -63,7 +63,7 @@ class SubtitleExporter:
             "",
             "[V4+ Styles]",
             "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-            "Style: Default,Arial,24,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,3,1,0,2,10,10,10,1",
+            "Style: Default,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,3,1,0,2,10,10,10,1",
             "",
             "[Events]",
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
@@ -82,5 +82,7 @@ class SubtitleExporter:
                 end = self.format_time_ass(sub['end'])
                 color_tag = rgb_to_ass_color(sub.get('color', '#FFFFFF'))
                 fontsize = self._calc_fontsize(sub)
-                text = f"{{\\fs{fontsize}\\c{color_tag}}}{sub['translated']}"
+                
+                clean_text = sub['translated'].replace('\n', '\\N')
+                text = f"{{\\fs{fontsize}\\c{color_tag}}}{clean_text}"
                 f.write(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text}\n")
