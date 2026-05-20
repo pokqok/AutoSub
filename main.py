@@ -215,26 +215,29 @@ class AnalysisWorker(QThread):
                     all_results.sort(key=lambda x: x["start"])
                     print(f"[SORT POST] {[(r['start'], r.get('translated','')[:10]) for r in all_results]}")
 
-                    # CRAFT end_ts 매핑: VLM의 부정확한 end를 CRAFT disappear timestamp로 보정
-                    # 단, 다음 자막 start 이전으로 cap (연속 자막에서 동일 CRAFT end 방지)
+                    # CRAFT end_ts 매핑: CRAFT disappear 정보를 보조 힌트로 저장 (VLM end는 덮어쓰지 않음)
+                    # CRAFT는 연속 자막에서 disappear를 놓칠 수 있으므로 VLM end를 주(primary)로 유지
                     appear_markers = [m for m in subtitle_frames if not m.get("is_disappear")]
                     print(f"\n[CRAFT→VLM MAPPING] {len(all_results)} VLM subs → {len(appear_markers)} CRAFT markers")
                     for i_cr, result in enumerate(all_results):
                         best_marker = min(appear_markers, key=lambda m: abs(m["timestamp"] - result["start"]))
                         dist = abs(best_marker["timestamp"] - result["start"])
-                        if best_marker.get("end_ts") is not None:
-                            craft_end = best_marker["end_ts"]
-                            old_end = result["end"]
-                            result["vlm_end"] = result["end"]  # 원본 VLM end 보존
-                            # 다음 자막이 있으면 CRAFT end를 next_start로 cap
+                        craft_end = best_marker.get("end_ts")
+                        result["vlm_end"] = result["end"]  # VLM 원본 end 보존
+                        if craft_end is not None:
+                            # CRAFT end는 보조 정보로만 저장, VLM end는 건드리지 않음
+                            result["craft_end"] = craft_end
+                            # 다음 자막 start로 cap한 CRAFT end도 저장
                             if i_cr + 1 < len(all_results):
                                 next_start = all_results[i_cr + 1]["start"]
-                                result["end"] = min(craft_end, next_start - 0.05)
+                                result["craft_end_capped"] = min(craft_end, next_start - 0.05)
                             else:
-                                result["end"] = craft_end
+                                result["craft_end_capped"] = craft_end
                             print(f"[CRAFT→END] sub[{i_cr}] start={result['start']:.2f} → marker t={best_marker['timestamp']:.2f} (dist={dist:.2f}), "
-                                  f"VLM end={old_end:.2f}, CRAFT end_ts={craft_end:.2f}, final end={result['end']:.2f}")
+                                  f"VLM end={result['end']:.2f}, CRAFT end_ts={craft_end:.2f}, craft_capped={result['craft_end_capped']:.2f}")
                         else:
+                            result["craft_end"] = None
+                            result["craft_end_capped"] = None
                             print(f"[CRAFT→END] sub[{i_cr}] start={result['start']:.2f} → marker t={best_marker['timestamp']:.2f} (dist={dist:.2f}), "
                                   f"NO end_ts, keeping VLM end={result['end']:.2f}")
 
@@ -275,22 +278,22 @@ class AnalysisWorker(QThread):
                     
                     dense_markers = []
                     for sub in all_results:
-                        sub_vlm_end = sub.get("vlm_end", sub["end"])
-                        sub_craft_end = sub["end"]
+                        sub_vlm_end = sub["end"]  # VLM end (primary)
+                        sub_craft_end = sub.get("craft_end_capped", sub_vlm_end)
                         bbox = sub.get("bbox")
                         
-                        # CRAFT end 기준 마커 (항상 추가)
+                        # VLM end 기준 마커 (항상 추가)
                         dense_markers.append({
                             "timestamp": sub["start"],
-                            "end_ts": sub_craft_end,
+                            "end_ts": sub_vlm_end,
                             "bbox": bbox
                         })
-                        # VLM end와 CRAFT end가 2초 이상 차이나면
-                        # VLM end 근처에도 별도 dense 프레임 필요
-                        if abs(sub_craft_end - sub_vlm_end) >= 2.0:
+                        # CRAFT end가 VLM end와 2초 이상 차이나면
+                        # CRAFT end 근처에도 별도 dense 프레임 추가
+                        if sub_craft_end and abs(sub_craft_end - sub_vlm_end) >= 2.0:
                             dense_markers.append({
-                                "timestamp": sub_vlm_end,
-                                "end_ts": sub_vlm_end,
+                                "timestamp": sub_craft_end,
+                                "end_ts": sub_craft_end,
                                 "bbox": bbox
                             })
                     

@@ -190,11 +190,11 @@ class SyncRefiner:
                 refined_start = original_start
 
             # ── end 탐색 ──
-            craft_end = sub["end"]  # CRAFT end (또는 next_start로 cap된 값)
-            vlm_end_orig = sub.get("vlm_end", craft_end)  # 원본 VLM end
-            # vlm_end부터 시작, CRAFT end까지 전체 커버
-            search_start_t = min(craft_end, vlm_end_orig)
-            search_end_t = max(craft_end, vlm_end_orig)
+            vlm_end = sub["end"]  # VLM end (primary)
+            craft_end_capped = sub.get("craft_end_capped", vlm_end)  # CRAFT end (보조)
+            # VLM end와 CRAFT end 양쪽을 전부 커버하는 범위에서 탐색
+            search_start_t = min(vlm_end, craft_end_capped)
+            search_end_t = max(vlm_end, craft_end_capped)
             disappear_frames = self._get_frames_in_window(
                 frame_list,
                 max(search_start_t - 1.0, min_t),
@@ -202,10 +202,9 @@ class SyncRefiner:
             )
             refined_end = self._find_end(disappear_frames, position, bbox)
 
-            # 탐색 실패 → VLM end와 CRAFT end 중 짧은 쪽 사용
-            # (CRAFT가 disappear를 놓치면 end가 비정상적으로 길어지므로)
+            # 탐색 실패 → VLM end 사용 (CRAFT end는 신뢰도가 낮을 수 있음)
             if refined_end is None:
-                refined_end = min(sub["end"], sub.get("vlm_end", sub["end"]))
+                refined_end = vlm_end
 
             # ── 안전장치 ──
             # next_start 침범 방지
