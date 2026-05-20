@@ -202,9 +202,10 @@ class SyncRefiner:
             )
             refined_end = self._find_end(disappear_frames, position, bbox)
 
-            # 탐색 실패 → VLM 원본 end 사용
+            # 탐색 실패 → VLM end와 CRAFT end 중 짧은 쪽 사용
+            # (CRAFT가 disappear를 놓치면 end가 비정상적으로 길어지므로)
             if refined_end is None:
-                refined_end = sub["end"]
+                refined_end = min(sub["end"], sub.get("vlm_end", sub["end"]))
 
             # ── 안전장치 ──
             # next_start 침범 방지
