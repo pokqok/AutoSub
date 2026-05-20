@@ -226,19 +226,12 @@ class AnalysisWorker(QThread):
                             craft_end = best_marker["end_ts"]
                             old_end = result["end"]
                             result["vlm_end"] = result["end"]  # 원본 VLM end 보존
-                            
-                            # CRAFT가 disappear를 놓쳐서 너무 길게 잡은 경우 (예: VLM보다 1.5초 이상 뒤) VLM end를 신뢰
-                            if craft_end > old_end + 1.5:
-                                candidate_end = old_end
-                            else:
-                                candidate_end = craft_end
-                                
-                            # 다음 자막이 있으면 cap
+                            # 다음 자막이 있으면 CRAFT end를 next_start로 cap
                             if i_cr + 1 < len(all_results):
                                 next_start = all_results[i_cr + 1]["start"]
-                                result["end"] = min(candidate_end, next_start - 0.05)
+                                result["end"] = min(craft_end, next_start - 0.05)
                             else:
-                                result["end"] = candidate_end
+                                result["end"] = craft_end
                             print(f"[CRAFT→END] sub[{i_cr}] start={result['start']:.2f} → marker t={best_marker['timestamp']:.2f} (dist={dist:.2f}), "
                                   f"VLM end={old_end:.2f}, CRAFT end_ts={craft_end:.2f}, final end={result['end']:.2f}")
                         else:
