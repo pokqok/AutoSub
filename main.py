@@ -267,6 +267,12 @@ class AnalysisWorker(QThread):
                             print(f"[GAP-FIX] sub[{i_gap+1}] start {old_start:.2f} → {first_same_block:.2f} "
                                   f"(gap={gap_size:.1f}s, same block end_ts={target_end_ts:.1f})")
 
+                    # ── 진단: CRAFT매핑 + GAP보정 직후 타이밍 ──
+                    for _di, _ds in enumerate(all_results):
+                        msg = f"[DIAG-MAP] sub[{_di}] {_ds['start']:.2f}~{_ds['end']:.2f} vlm_end={_ds.get('vlm_end','?')} craft_end={_ds.get('craft_end_capped','?')}"
+                        print(msg)
+                        self.log.emit(msg)
+
                     # Phase 3 직전: VLM 결과를 기반으로 Dense 추출 (정확한 P3 보정용)
                     self._check_cancel()
                     self.log.emit("  -> Extracting dense frames for sync refinement based on VLM results...")
@@ -320,6 +326,12 @@ class AnalysisWorker(QThread):
                         final_results = all_results
                         self.progress.emit(100, 100, "Phase 3/3: Done (fallback)")
 
+                    # ── 진단: P3 직후 타이밍 ──
+                    for _di, _ds in enumerate(final_results):
+                        msg = f"[DIAG-P3] sub[{_di}] {_ds['start']:.2f}~{_ds['end']:.2f} vlm_end={_ds.get('vlm_end','?')} craft_end={_ds.get('craft_end_capped','?')}"
+                        print(msg)
+                        self.log.emit(msg)
+
                     self.progress.emit(95, 100, "Exporting subtitles...")
 
                     # Phase 4: Post-review (최종 검수)
@@ -336,6 +348,12 @@ class AnalysisWorker(QThread):
                     except Exception as e:
                         self.log.emit(f"  -> WARNING: Post-review failed, keeping Phase 3 result: {str(e)}")
                         self.progress.emit(100, 100, "Phase 4/4: Skipped")
+
+                    # ── 진단: Phase 4 직후 (최종) 타이밍 ──
+                    for _di, _ds in enumerate(final_results):
+                        msg = f"[DIAG-FINAL] sub[{_di}] {_ds['start']:.2f}~{_ds['end']:.2f}"
+                        print(msg)
+                        self.log.emit(msg)
 
 
                     # Save
