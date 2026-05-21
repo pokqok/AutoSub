@@ -114,8 +114,18 @@ class VLMClient:
         if not all_subtitles or len(all_subtitles) < 2:
             return all_subtitles
 
-        # JSON 문자열로 직렬화 (길이 제한: 최근 80개)
-        subs_json = json.dumps(all_subtitles, ensure_ascii=False, indent=1)
+        # 내부 보조 필드 제거 후 LLM에 전송 (vlm_end, craft_end 등이 남아있으면 LLM이 참고해서 시간을 바꿔버림)
+        clean_subs = []
+        for s in all_subtitles:
+            clean_subs.append({
+                "start": s["start"],
+                "end": s["end"],
+                "original": s.get("original", ""),
+                "translated": s.get("translated", ""),
+                "color": s.get("color", "#FFFFFF"),
+                "position": s.get("position", "bottom-center")
+            })
+        subs_json = json.dumps(clean_subs, ensure_ascii=False, indent=1)
 
         prompt_lines = [
             "You are a senior subtitle QC editor working for a certified localization studio.",
