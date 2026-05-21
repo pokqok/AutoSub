@@ -243,7 +243,8 @@ class VLMClient:
             "",
             "Output: Return ONLY a valid JSON array. Absolutely no markdown code blocks, no explanations, no greetings, no commentary.",
             "Each entry in the array must include:",
-            "- frame_index: index within this batch (0-based)",
+            "- frame_index: index within this batch (0-based) where the subtitle first appears",
+            "- end_frame_index: index within this batch (0-based) of the LAST frame where this subtitle is still visible. If the subtitle is only visible in a single frame, this will be equal to frame_index. If it remains visible for multiple frames, this will be the index of the last frame in the batch where it is still clearly visible before disappearing or changing.",
             "- original: corrected Japanese text (OCR errors fixed)",
             "- translated: natural Korean translation",
             "- color: the text's core fill color as HEX (e.g., #FFFFFF). You MUST extract the color of the text itself (e.g., pink, white). Do NOT pick the color of the character's hair, clothes, background, or text outline/shadow.",
@@ -402,25 +403,44 @@ class VLMClient:
                 start_t = frame_batch[0]["timestamp"] if frame_batch else 0.0
                 pos = sub.get('position', 'bottom-center')
 
-            # end 계산: 다음 자막까지 gap이 있으면 마지막 가시 프레임 기준
-            if i + 1 < len(subtitles):
-                next_idx = subtitles[i + 1].get('frame_index', frame_idx + 1)
-                if 0 <= next_idx < len(frame_batch):
-                    if next_idx > frame_idx + 1:
-                        # gap 존재: 중간 프레임들은 현재 자막의 중복(VLM이 dedup)
-                        # → 마지막 가시 프레임(next_idx - 1) 기준으로 end 산출
-                        last_visible_ts = frame_batch[next_idx - 1]["timestamp"]
-                        end_t = min(last_visible_ts + 1.0,
-                                    frame_batch[next_idx]["timestamp"] - 0.05)
-                        print(f"[VLM-END] sub {i}: gap detected, last_visible={last_visible_ts:.2f}, "
-                              f"next={frame_batch[next_idx]['timestamp']:.2f}, end={end_t:.2f}")
+            # end 계산: end_frame_index가 제공된 경우 우선 활용
+            end_frame_idx_raw = sub.get('end_frame_index')
+            end_frame_idx = None
+            if end_frame_idx_raw is not None:
+                try:
+                    end_frame_idx = int(float(end_frame_idx_raw))
+                except (ValueError, TypeError):
+                    pass
+
+            if end_frame_idx is not None and 0 <= end_frame_idx < len(frame_batch):
+                last_visible_ts = frame_batch[end_frame_idx]["timestamp"]
+                end_t = last_visible_ts + 1.0
+                # 다음 자막 시작 시간으로 캡핑
+                if i + 1 < len(subtitles):
+                    next_idx = subtitles[i + 1].get('frame_index', frame_idx + 1)
+                    if 0 <= next_idx < len(frame_batch):
+                        end_t = min(end_t, frame_batch[next_idx]["timestamp"] - 0.05)
+                print(f"[VLM-END] sub {i}: end_frame_index={end_frame_idx} -> last_visible={last_visible_ts:.2f}, end_t={end_t:.2f}")
+            else:
+                # end 계산: 다음 자막까지 gap이 있으면 마지막 가시 프레임 기준
+                if i + 1 < len(subtitles):
+                    next_idx = subtitles[i + 1].get('frame_index', frame_idx + 1)
+                    if 0 <= next_idx < len(frame_batch):
+                        if next_idx > frame_idx + 1:
+                            # gap 존재: 중간 프레임들은 현재 자막의 중복(VLM이 dedup)
+                            # → 마지막 가시 프레임(next_idx - 1) 기준으로 end 산출
+                            last_visible_ts = frame_batch[next_idx - 1]["timestamp"]
+                            end_t = min(last_visible_ts + 1.0,
+                                        frame_batch[next_idx]["timestamp"] - 0.05)
+                            print(f"[VLM-END] sub {i}: gap detected, last_visible={last_visible_ts:.2f}, "
+                                  f"next={frame_batch[next_idx]['timestamp']:.2f}, end={end_t:.2f}")
+                        else:
+                            # 인접 프레임 (연속 자막) → 기존 로직
+                            end_t = frame_batch[next_idx]["timestamp"] - 0.05
                     else:
-                        # 인접 프레임 (연속 자막) → 기존 로직
-                        end_t = frame_batch[next_idx]["timestamp"] - 0.05
+                        end_t = start_t + 1.0
                 else:
                     end_t = start_t + 1.0
-            else:
-                end_t = start_t + 1.0
 
             text_len = len(sub.get('translated', ''))
             if text_len <= 3 and (end_t - start_t) > 0.8:

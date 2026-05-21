@@ -105,17 +105,33 @@ class SyncRefiner:
             roi1 = self._get_roi(frames[i - 1], position, bbox)
             roi2 = self._get_roi(frames[i],     position, bbox)
             d = self._frame_diff(roi1, roi2)
-            diffs.append((frames[i]["timestamp"], d))
+            
+            # Grayscale std dev check to filter appearance spikes
+            std_diff = 0.0
+            if roi1 is not None and roi2 is not None:
+                try:
+                    gray1 = cv2.cvtColor(roi1, cv2.COLOR_BGR2GRAY)
+                    gray2 = cv2.cvtColor(roi2, cv2.COLOR_BGR2GRAY)
+                    std1 = float(np.std(gray1))
+                    std2 = float(np.std(gray2))
+                    std_diff = std2 - std1
+                except Exception:
+                    pass
+            diffs.append((frames[i]["timestamp"], d, std_diff))
 
-        baseline = max(float(np.percentile([d for _, d in diffs], 25)), MIN_DIFF)
+        baseline = max(float(np.percentile([d for _, d, _ in diffs], 25)), MIN_DIFF)
         threshold = baseline * self.spike_factor
 
         # 로그 추가
         print(f"[FIND_END] frames={len(frames)}, baseline={baseline:.2f}, threshold={threshold:.2f}")
-        print(f"[FIND_END] diffs={[(f'{t:.2f}', f'{d:.2f}') for t, d in diffs]}")
+        print(f"[FIND_END] diffs={[(f'{t:.2f}', f'{d:.2f}', f'{sd:.2f}') for t, d, sd in diffs]}")
 
-        for ts, d in diffs:
+        for ts, d, std_diff in diffs:
             if d >= threshold:
+                if std_diff > 1.0:
+                    # Appearance spike (text added) -> ignore since we are looking for a disappearance
+                    print(f"[FIND_END] Spike at {ts:.2f} (diff={d:.2f}) ignored: appearance spike (std_diff={std_diff:.2f} > 1.0)")
+                    continue
                 return ts
         return None
 
