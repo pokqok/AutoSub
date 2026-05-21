@@ -402,11 +402,21 @@ class VLMClient:
                 start_t = frame_batch[0]["timestamp"] if frame_batch else 0.0
                 pos = sub.get('position', 'bottom-center')
 
-            # end 계산
+            # end 계산: 다음 자막까지 gap이 있으면 마지막 가시 프레임 기준
             if i + 1 < len(subtitles):
                 next_idx = subtitles[i + 1].get('frame_index', frame_idx + 1)
                 if 0 <= next_idx < len(frame_batch):
-                    end_t = frame_batch[next_idx]["timestamp"] - 0.05
+                    if next_idx > frame_idx + 1:
+                        # gap 존재: 중간 프레임들은 현재 자막의 중복(VLM이 dedup)
+                        # → 마지막 가시 프레임(next_idx - 1) 기준으로 end 산출
+                        last_visible_ts = frame_batch[next_idx - 1]["timestamp"]
+                        end_t = min(last_visible_ts + 1.0,
+                                    frame_batch[next_idx]["timestamp"] - 0.05)
+                        print(f"[VLM-END] sub {i}: gap detected, last_visible={last_visible_ts:.2f}, "
+                              f"next={frame_batch[next_idx]['timestamp']:.2f}, end={end_t:.2f}")
+                    else:
+                        # 인접 프레임 (연속 자막) → 기존 로직
+                        end_t = frame_batch[next_idx]["timestamp"] - 0.05
                 else:
                     end_t = start_t + 1.0
             else:
