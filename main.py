@@ -20,6 +20,21 @@ from core.subtitle_exporter import SubtitleExporter
 CONFIG_FILE = "config.json"
 VIDEO_EXTENSIONS = ('.mp4', '.mkv', '.avi', '.mov', '.flv', '.wmv')
 
+class TeeLogger:
+    """stdout/stderr를 터미널과 파일 양쪽에 동시 출력"""
+    def __init__(self, filename):
+        self.terminal = sys.stdout
+        self.log = open(filename, "a", encoding="utf-8")
+        
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+        self.log.flush()
+        
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
+
 class AnalysisWorker(QThread):
     """
     비디오 리스트를 순회하며 Detection 필터 → VLM 배치 → Sync 보정 → 자막 생성을 수행하는 백그라운드 스레드
@@ -57,6 +72,13 @@ class AnalysisWorker(QThread):
                 print(f"[Cleanup] Failed to remove {temp_dir}: {e}")
 
     def run(self):
+        # 디버그 로그 파일 자동 저장
+        debug_log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "autosub_debug.log")
+        logger = TeeLogger(debug_log_path)
+        sys.stdout = logger
+        sys.stderr = logger
+        print(f"\n\n{'='*50}\n[AutoSub] New run started at {time.strftime('%Y-%m-%d %H:%M:%S')}\n{'='*50}")
+
         try:
             api_key = self.settings.get('api_key', '')
             model_name = self.settings.get('model_name', 'gemini-3-flash-preview:cloud')

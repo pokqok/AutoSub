@@ -362,6 +362,17 @@ class VLMClient:
                         time.sleep(wait)
                     continue
 
+                # 빈 배열 [] 반환 → NSFW safety block 가능성
+                # backup model이 있으면 즉시 전환하여 재시도
+                if len(parsed) == 0 and self.backup_model and model_name != self.backup_model:
+                    print(f"[VLMClient] Empty array [] from {model_name} (likely safety block). Switching to backup: {self.backup_model}")
+                    model_name = self.backup_model
+                    payload["model"] = model_name
+                    time.sleep(2)
+                    continue
+                elif len(parsed) == 0:
+                    print(f"[VLMClient] Empty array [] from {model_name}. No more fallback models.")
+
                 break  # SUCCESS
 
             except Exception as e:
