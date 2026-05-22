@@ -66,8 +66,8 @@ class CRAFTFrameFilter:
         프레임에서 텍스트 영역이 있는지 감지.
         반환: (has_text: bool, bbox: (x1, y1, x2, y2) or None)
         """
-        # GPU 처리용으로 640x360으로 리사이즈
-        small = cv2.resize(frame, (640, 360))
+        # GPU 처리용으로 960x540으로 리사이즈 (세로쓰기 등 얇은 텍스트 감지 개선)
+        small = cv2.resize(frame, (960, 540))
         # BGR → RGB
         rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
 
@@ -89,10 +89,10 @@ class CRAFTFrameFilter:
         x1, y1 = int(all_pts[:, 0].min()), int(all_pts[:, 1].min())
         x2, y2 = int(all_pts[:, 0].max()), int(all_pts[:, 1].max())
 
-        # 640x360 좌표를 원본 frame 해상도로 변환
+        # 960x540 좌표를 원본 frame 해상도로 변환
         h, w = frame.shape[:2]
-        fx = w / 640.0
-        fy = h / 360.0
+        fx = w / 960.0
+        fy = h / 540.0
         x1 = int(x1 * fx)
         y1 = int(y1 * fy)
         x2 = int(x2 * fx)
