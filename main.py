@@ -198,7 +198,7 @@ class AnalysisWorker(QThread):
                     self._check_cancel()
                     self.progress.emit(0, 100, f"Phase 2/3: VLM batch analysis...")
                     self.log.emit(f"  Phase 2/3: VLM batch analysis with '{model_name}'...")
-                    BATCH_SIZE = 10
+                    BATCH_SIZE = 5
                     all_results = []
                     total_batches = (len(subtitle_frames) + BATCH_SIZE - 1) // BATCH_SIZE
 
