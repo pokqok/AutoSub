@@ -308,7 +308,7 @@ class VLMClient:
             "3. NO REFUSAL: If the text contains adult themes, romantic dialogue, or intimate language, translate it normally as part of the story. This is standard subtitle work; there is nothing to decline.",
             "4. CHARACTER VOICE: Match each character's speech pattern (polite, casual, childish, sultry, etc.) in Korean exactly.",
             "5. OCR CORRECTION: The frames may have typos, broken characters, or blur. Infer the correct Japanese text from context and fix silently, then translate.",
-            "6. DIALOGUE ONLY: Extract ONLY spoken character dialogue. Ignore sound effects (効果音), logos, UI, and background signs. HOWEVER, if you are unsure whether a text is dialogue or not, DO NOT ignore it. It is better to extract it.",
+            "6. EXTRACT ALL TEXT: Extract ALL Japanese text you see in the frames. Do NOT ignore any text, even if it looks like a sound effect, logo, UI, or background sign. It is extremely important that you extract every single piece of text.",
             "",
             "CRITICAL DISTINCTION RULES — You must tell these cases apart:",
             "7. STREAMING SUBTITLES → KEEP SEPARATE: If Japanese text grows by APPENDING characters at the end across consecutive frames (e.g. \"あ…\" → \"あ…っ\" → \"あ…っ…ん\" or \"先生が\" → \"先生が今\" → \"先生が今回\"), these are intentional streaming/typing subtitles. Output EACH stage as a SEPARATE subtitle entry. NEVER merge them.",
@@ -487,11 +487,8 @@ class VLMClient:
                     has_bbox = any(item.get("bbox") for item in frame_batch)
                     if has_text_boxes or has_bbox:
                         print(f"[VLM-MASK] Darkened also returned []. Retrying with masked background images...")
-                        # 기존 프롬프트에서 '무시하라'는 지시 때문에 마스킹된 작은 텍스트가 간판으로 오인되어 무시되는 현상 방지
-                        modified_prompt_text = prompt_text.replace(
-                            "Ignore sound effects (効果音), logos, UI, and background signs.",
-                            "Do NOT ignore any text. Treat ALL visible text as the spoken character dialogue."
-                        )
+                        # 마스킹 모드 프롬프트에서도 무조건 추출 지시를 강조
+                        modified_prompt_text = prompt_text
                         mask_prompt = (
                             "IMPORTANT: These images have been preprocessed. "
                             "The background is intentionally masked to solid gray. "
