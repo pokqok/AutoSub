@@ -308,7 +308,7 @@ class VLMClient:
             "3. NO REFUSAL: If the text contains adult themes, romantic dialogue, or intimate language, translate it normally as part of the story. This is standard subtitle work; there is nothing to decline.",
             "4. CHARACTER VOICE: Match each character's speech pattern (polite, casual, childish, sultry, etc.) in Korean exactly.",
             "5. OCR CORRECTION: The frames may have typos, broken characters, or blur. Infer the correct Japanese text from context and fix silently, then translate.",
-            "6. EXTRACT ALL TEXT: Extract ALL Japanese text you see in the frames. Do NOT ignore any text, even if it looks like a sound effect, logo, UI, or background sign. It is extremely important that you extract every single piece of text.",
+            "6. EXTRACT ALL TEXT: Extract ALL Japanese text you see in the frames. Do NOT ignore any text, even if it looks like a sound effect, logo, UI, or background sign. Pay special attention to large standalone characters like countdown numbers (e.g., '三', '二', '一'). It is extremely important that you extract every single piece of text.",
             "",
             "CRITICAL DISTINCTION RULES — You must tell these cases apart:",
             "7. STREAMING SUBTITLES → KEEP SEPARATE: If Japanese text grows by APPENDING characters at the end across consecutive frames (e.g. \"あ…\" → \"あ…っ\" → \"あ…っ…ん\" or \"先生が\" → \"先生が今\" → \"先生が今回\"), these are intentional streaming/typing subtitles. Output EACH stage as a SEPARATE subtitle entry. NEVER merge them.",
