@@ -379,6 +379,7 @@ class VLMClient:
         crop_retry_done = False
         darken_retry_done = False
         used_darkened = False
+        used_masked = False
         darken_gamma = 2.5
         model_fails = 0
         
@@ -481,6 +482,7 @@ class VLMClient:
                     # 감마 보정도 실패 → 배경 블랙 마스킹으로 최후 재시도
                     crop_retry_done = True
                     used_darkened = False
+                    used_masked = True
                     has_text_boxes = any(item.get("text_boxes") for item in frame_batch)
                     has_bbox = any(item.get("bbox") for item in frame_batch)
                     if has_text_boxes or has_bbox:
@@ -520,7 +522,9 @@ class VLMClient:
                     for sub in parsed:
                         if 'color' in sub:
                             sub['color'] = self._reverse_gamma_color(sub['color'], darken_gamma)
-                    used_darkened = False
+                
+                fallback_type = "MASKED" if used_masked else ("DARKENED" if used_darkened else "ORIGINAL")
+                print(f"[VLMClient] SUCCESS with {fallback_type} images using model={model_name}. Input frames: {len(frame_batch)}, Output subtitles: {len(parsed)}")
 
                 break  # SUCCESS
 
