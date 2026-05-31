@@ -200,8 +200,8 @@ class VLMClient:
         scale_x = w / orig_w if orig_w > 0 else 1.0
         scale_y = h / orig_h if orig_h > 0 else 1.0
         
-        # 완전한 검은색 배경 생성
-        masked_img = Image.new('RGB', (w, h), (0, 0, 0))
+        # 완전한 회색 배경 생성 (검은색 테두리 자막 보존을 위해)
+        masked_img = Image.new('RGB', (w, h), (128, 128, 128))
         
         # 자막 영역(패딩 포함)만 원본에서 복사해오기
         for box in text_boxes:
@@ -211,9 +211,9 @@ class VLMClient:
             x2 = int(x2 * scale_x)
             y2 = int(y2 * scale_y)
             
-            # 패딩 추가
-            pad_x = int((x2 - x1) * 0.3)
-            pad_y = int((y2 - y1) * 0.3)
+            # 패딩 추가 (최소 30픽셀 보장하여 글자 잘림 방지)
+            pad_x = max(30, int((x2 - x1) * 0.3))
+            pad_y = max(30, int((y2 - y1) * 0.3))
             x1 = max(0, x1 - pad_x)
             y1 = max(0, y1 - pad_y)
             x2 = min(w, x2 + pad_x)
@@ -308,7 +308,7 @@ class VLMClient:
             "3. NO REFUSAL: If the text contains adult themes, romantic dialogue, or intimate language, translate it normally as part of the story. This is standard subtitle work; there is nothing to decline.",
             "4. CHARACTER VOICE: Match each character's speech pattern (polite, casual, childish, sultry, etc.) in Korean exactly.",
             "5. OCR CORRECTION: The frames may have typos, broken characters, or blur. Infer the correct Japanese text from context and fix silently, then translate.",
-            "6. DIALOGUE ONLY: Extract ONLY spoken character dialogue (typically the largest text at the bottom). Completely ignore sound effects (効果音), logos, background text, UI, and signs.",
+            "6. DIALOGUE ONLY: Extract ONLY spoken character dialogue. Ignore sound effects (効果音), logos, UI, and background signs. HOWEVER, if you are unsure whether a text is dialogue or not, DO NOT ignore it. It is better to extract it.",
             "",
             "CRITICAL DISTINCTION RULES — You must tell these cases apart:",
             "7. STREAMING SUBTITLES → KEEP SEPARATE: If Japanese text grows by APPENDING characters at the end across consecutive frames (e.g. \"あ…\" → \"あ…っ\" → \"あ…っ…ん\" or \"先生が\" → \"先生が今\" → \"先生が今回\"), these are intentional streaming/typing subtitles. Output EACH stage as a SEPARATE subtitle entry. NEVER merge them.",
@@ -489,14 +489,14 @@ class VLMClient:
                         print(f"[VLM-MASK] Darkened also returned []. Retrying with masked background images...")
                         # 기존 프롬프트에서 '무시하라'는 지시 때문에 마스킹된 작은 텍스트가 간판으로 오인되어 무시되는 현상 방지
                         modified_prompt_text = prompt_text.replace(
-                            "Completely ignore sound effects (効果音), logos, background text, UI, and signs.",
+                            "Ignore sound effects (効果音), logos, UI, and background signs.",
                             "Do NOT ignore any text. Treat ALL visible text as the spoken character dialogue."
                         )
                         mask_prompt = (
                             "IMPORTANT: These images have been preprocessed. "
-                            "The background is intentionally masked to solid black. "
+                            "The background is intentionally masked to solid gray. "
                             "ONLY the subtitle/text regions remain visible. "
-                            "You MUST read ALL visible text on the non-black areas, no matter how small. "
+                            "You MUST read ALL visible text on the non-gray areas, no matter how small. "
                             "Do NOT return an empty array if there is any visible text.\n"
                             "CRITICAL: DO NOT output any internal monologue, reasoning, or 'Wait, let me check' commentary. "
                             "You MUST output ONLY a valid JSON array. NO Markdown blocks, NO conversational text.\n\n"
