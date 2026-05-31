@@ -497,7 +497,9 @@ class VLMClient:
                             "The background is intentionally masked to solid black. "
                             "ONLY the subtitle/text regions remain visible. "
                             "You MUST read ALL visible text on the non-black areas, no matter how small. "
-                            "Do NOT return an empty array if there is any visible text.\n\n"
+                            "Do NOT return an empty array if there is any visible text.\n"
+                            "CRITICAL: DO NOT output any internal monologue, reasoning, or 'Wait, let me check' commentary. "
+                            "You MUST output ONLY a valid JSON array. NO Markdown blocks, NO conversational text.\n\n"
                             + modified_prompt_text
                         )
                         masked_content = [{"type": "text", "text": mask_prompt}]
