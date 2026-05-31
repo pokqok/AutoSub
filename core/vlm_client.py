@@ -452,8 +452,8 @@ class VLMClient:
                     continue
 
                 # 빈 배열 [] 반환 → NSFW safety block 가능성
-                # backup model이 있으면 즉시 전환하여 재시도
-                if len(parsed) == 0 and self.backup_model and model_name != self.backup_model:
+                # 단, 마스킹 단계에서는 검열이 아니라 VLM이 못 읽은 것이므로 백업 전환 안 함
+                if len(parsed) == 0 and self.backup_model and model_name != self.backup_model and not used_masked:
                     print(f"[VLMClient] Empty array [] from {model_name} (likely safety block). Switching to backup: {self.backup_model}")
                     model_name = self.backup_model
                     payload["model"] = model_name
@@ -487,7 +487,15 @@ class VLMClient:
                     has_bbox = any(item.get("bbox") for item in frame_batch)
                     if has_text_boxes or has_bbox:
                         print(f"[VLM-MASK] Darkened also returned []. Retrying with masked background images...")
-                        masked_content = [{"type": "text", "text": prompt_text}]
+                        mask_prompt = (
+                            "IMPORTANT: These images have been preprocessed. "
+                            "The background is intentionally masked to solid black. "
+                            "ONLY the subtitle/text regions remain visible. "
+                            "You MUST read ALL visible text on the non-black areas, no matter how small. "
+                            "Do NOT return an empty array if there is any visible text.\n\n"
+                            + prompt_text
+                        )
+                        masked_content = [{"type": "text", "text": mask_prompt}]
                         for item in frame_batch:
                             text_boxes = item.get("text_boxes", [])
                             orig_w = item.get("orig_w", 1920)
