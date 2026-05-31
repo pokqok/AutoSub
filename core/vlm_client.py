@@ -190,21 +190,19 @@ class VLMClient:
             return base64.b64encode(f.read()).decode('utf-8')
 
     def _encode_image_cropped(self, filepath: str, bbox: tuple, orig_w: int = 1920, orig_h: int = 1080) -> str:
-        """bbox 영역만 크롭하여 base64 인코딩. NSFW 검열 우회용."""
+        """bbox 영역만 크롭하여 base64 인코딩. NSFW 검열 우회 최후 수단."""
         print(f"[VLM-CROP] reading: {filepath}, bbox={bbox}")
         if not os.path.exists(filepath):
             raise FileNotFoundError(f"Frame file not found: {filepath}")
         img = Image.open(filepath)
         w, h = img.size
         x1, y1, x2, y2 = bbox
-        # bbox는 원본 해상도 기준이므로 현재 이미지 크기에 맞게 스케일링
         scale_x = w / orig_w if orig_w > 0 else 1.0
         scale_y = h / orig_h if orig_h > 0 else 1.0
         x1 = int(x1 * scale_x)
         y1 = int(y1 * scale_y)
         x2 = int(x2 * scale_x)
         y2 = int(y2 * scale_y)
-        # 패딩 추가 (글자 주변 여유 확보, 크롭 영역의 30%)
         pad_x = int((x2 - x1) * 0.3)
         pad_y = int((y2 - y1) * 0.3)
         x1 = max(0, x1 - pad_x)
@@ -216,6 +214,44 @@ class VLMClient:
         cropped.save(buf, format='JPEG', quality=90)
         print(f"[VLM-CROP] cropped region: ({x1},{y1})-({x2},{y2}), size={cropped.size}")
         return base64.b64encode(buf.getvalue()).decode('utf-8')
+
+    def _encode_image_darkened(self, filepath: str, gamma: float = 1.5) -> str:
+        """감마 보정으로 이미지를 살짝 어둡게 하여 base64 인코딩. NSFW 검열 우회용."""
+        print(f"[VLM-DARK] reading: {filepath}, gamma={gamma}")
+        if not os.path.exists(filepath):
+            raise FileNotFoundError(f"Frame file not found: {filepath}")
+        import numpy as np
+        img = Image.open(filepath)
+        arr = np.array(img, dtype=np.float32) / 255.0
+        arr = np.power(arr, gamma)  # gamma > 1 → 어둡게
+        arr = (arr * 255).clip(0, 255).astype(np.uint8)
+        darkened = Image.fromarray(arr)
+        buf = io.BytesIO()
+        darkened.save(buf, format='JPEG', quality=90)
+        print(f"[VLM-DARK] darkened with gamma={gamma}, size={img.size}")
+        return base64.b64encode(buf.getvalue()).decode('utf-8')
+
+    @staticmethod
+    def _reverse_gamma_color(hex_color: str, gamma: float = 1.5) -> str:
+        """어두운 이미지에서 추출된 색상을 역감마 보정하여 원래 색상으로 복원."""
+        if not hex_color or not hex_color.startswith('#') or len(hex_color) < 7:
+            return hex_color
+        try:
+            r = int(hex_color[1:3], 16)
+            g = int(hex_color[3:5], 16)
+            b = int(hex_color[5:7], 16)
+            inv_gamma = 1.0 / gamma
+            r = int(255 * (r / 255.0) ** inv_gamma)
+            g = int(255 * (g / 255.0) ** inv_gamma)
+            b = int(255 * (b / 255.0) ** inv_gamma)
+            r = min(255, max(0, r))
+            g = min(255, max(0, g))
+            b = min(255, max(0, b))
+            restored = f"#{r:02X}{g:02X}{b:02X}"
+            print(f"[VLM-DARK] color restored: {hex_color} → {restored}")
+            return restored
+        except Exception:
+            return hex_color
 
     def analyze_batch(self, frame_batch: List[Dict],
                       custom_prompt: str = "",
@@ -329,6 +365,9 @@ class VLMClient:
         parsed = None
         raw_content = ""
         crop_retry_done = False
+        darken_retry_done = False
+        used_darkened = False
+        darken_gamma = 1.5
         for attempt in range(10):
             # 3회 이상 실패 시 backup model로 전환
             if attempt >= 3 and self.backup_model and model_name == self.model_name:
@@ -401,12 +440,30 @@ class VLMClient:
                     payload["model"] = model_name
                     time.sleep(2)
                     continue
+                elif len(parsed) == 0 and not darken_retry_done:
+                    # 양쪽 모델 모두 빈 배열 → 감마 보정(어둡게)으로 재시도
+                    darken_retry_done = True
+                    print(f"[VLM-DARK] Both models returned []. Retrying with darkened images (gamma={darken_gamma})...")
+                    dark_content = [{"type": "text", "text": prompt_text}]
+                    for item in frame_batch:
+                        b64 = self._encode_image_darkened(item["filepath"], gamma=darken_gamma)
+                        dark_content.append({
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{b64}"}
+                        })
+                    payload["messages"] = [{"role": "user", "content": dark_content}]
+                    model_name = self.model_name
+                    payload["model"] = model_name
+                    used_darkened = True
+                    time.sleep(2)
+                    continue
                 elif len(parsed) == 0 and not crop_retry_done:
-                    # 양쪽 모델 모두 빈 배열 → bbox 크롭 이미지로 재시도
+                    # 감마 보정도 실패 → bbox 크롭 이미지로 최후 재시도
                     crop_retry_done = True
+                    used_darkened = False
                     has_bbox = any(item.get("bbox") for item in frame_batch)
                     if has_bbox:
-                        print(f"[VLM-CROP] Both models returned []. Retrying with bbox-cropped images...")
+                        print(f"[VLM-CROP] Darkened also returned []. Retrying with bbox-cropped images...")
                         cropped_content = [{"type": "text", "text": prompt_text}]
                         for item in frame_batch:
                             bbox = item.get("bbox")
@@ -422,7 +479,7 @@ class VLMClient:
                                 "image_url": {"url": f"data:image/jpeg;base64,{b64}"}
                             })
                         payload["messages"] = [{"role": "user", "content": cropped_content}]
-                        model_name = self.model_name  # 원래 모델로 리셋
+                        model_name = self.model_name
                         payload["model"] = model_name
                         time.sleep(2)
                         continue
@@ -430,6 +487,14 @@ class VLMClient:
                         print(f"[VLM-CROP] No bbox info available. Cannot crop.")
                 elif len(parsed) == 0:
                     print(f"[VLMClient] Empty array [] from {model_name}. All fallbacks exhausted.")
+
+                # 감마 보정 이미지에서 추출된 색상 복원
+                if used_darkened and len(parsed) > 0:
+                    print(f"[VLM-DARK] Darkened image succeeded! Restoring colors...")
+                    for sub in parsed:
+                        if 'color' in sub:
+                            sub['color'] = self._reverse_gamma_color(sub['color'], darken_gamma)
+                    used_darkened = False
 
                 break  # SUCCESS
 
