@@ -487,13 +487,18 @@ class VLMClient:
                     has_bbox = any(item.get("bbox") for item in frame_batch)
                     if has_text_boxes or has_bbox:
                         print(f"[VLM-MASK] Darkened also returned []. Retrying with masked background images...")
+                        # 기존 프롬프트에서 '무시하라'는 지시 때문에 마스킹된 작은 텍스트가 간판으로 오인되어 무시되는 현상 방지
+                        modified_prompt_text = prompt_text.replace(
+                            "Completely ignore sound effects (効果音), logos, background text, UI, and signs.",
+                            "Do NOT ignore any text. Treat ALL visible text as the spoken character dialogue."
+                        )
                         mask_prompt = (
                             "IMPORTANT: These images have been preprocessed. "
                             "The background is intentionally masked to solid black. "
                             "ONLY the subtitle/text regions remain visible. "
                             "You MUST read ALL visible text on the non-black areas, no matter how small. "
                             "Do NOT return an empty array if there is any visible text.\n\n"
-                            + prompt_text
+                            + modified_prompt_text
                         )
                         masked_content = [{"type": "text", "text": mask_prompt}]
                         for item in frame_batch:
