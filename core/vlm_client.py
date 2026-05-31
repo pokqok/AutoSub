@@ -380,14 +380,16 @@ class VLMClient:
         darken_retry_done = False
         used_darkened = False
         darken_gamma = 2.5
-        for attempt in range(10):
+        model_fails = 0
+        
+        for attempt in range(15):
             # 3회 이상 실패 시 backup model로 전환
-            if attempt >= 3 and self.backup_model and model_name == self.model_name:
+            if model_fails >= 3 and self.backup_model and model_name == self.model_name:
                 model_name = self.backup_model
                 print(f"[VLMClient] Primary model failed. Switching to backup: {model_name}")
             try:
                 payload["model"] = model_name
-                print(f"[VLMClient] API call attempt {attempt+1}/10 (model={model_name})...")
+                print(f"[VLMClient] API call attempt {attempt+1}/15 (model={model_name})...")
                 response = requests.post(
                     f"{self.base_url}/chat/completions",
                     headers=headers, json=payload, timeout=300
@@ -403,8 +405,9 @@ class VLMClient:
                     print(f"[VLMClient] API error: {last_error}")
                     if status != 429 and 400 <= status < 500:
                         break
-                    if attempt < 9:
-                        wait = min(3 * (2 ** (attempt % 3)), 12)
+                    model_fails += 1
+                    if attempt < 14:
+                        wait = min(3 * (2 ** (model_fails % 3)), 12)
                         print(f"[VLMClient] Retrying in {wait}s...")
                         time.sleep(wait)
                     continue
@@ -418,8 +421,9 @@ class VLMClient:
                 if not raw_content.strip():
                     last_error = f"Empty content ({model_name}, attempt {(attempt%3)+1}/3). API returned HTTP 200 with empty message."
                     print(f"[VLMClient] {last_error}")
-                    if attempt < 9:
-                        wait = min(3 * (2 ** (attempt % 3)), 12)
+                    model_fails += 1
+                    if attempt < 14:
+                        wait = min(3 * (2 ** (model_fails % 3)), 12)
                         print(f"[VLMClient] Retrying in {wait}s...")
                         time.sleep(wait)
                     continue
@@ -428,8 +432,9 @@ class VLMClient:
                 if parsed is None:
                     last_error = f"JSON parse failed ({model_name}, attempt {(attempt%3)+1}/3). First 500 chars: {raw_content[:500]}"
                     print(f"[VLMClient] {last_error}")
-                    if attempt < 9:
-                        wait = min(3 * (2 ** (attempt % 3)), 12)
+                    model_fails += 1
+                    if attempt < 14:
+                        wait = min(3 * (2 ** (model_fails % 3)), 12)
                         print(f"[VLMClient] Retrying in {wait}s...")
                         time.sleep(wait)
                     continue
@@ -438,8 +443,9 @@ class VLMClient:
                 if not isinstance(parsed, list):
                     last_error = f"Unexpected format. Got: {type(parsed).__name__}. Raw: {raw_content[:500]}"
                     print(f"[VLMClient] {last_error}")
-                    if attempt < 9:
-                        wait = min(3 * (2 ** (attempt % 3)), 12)
+                    model_fails += 1
+                    if attempt < 14:
+                        wait = min(3 * (2 ** (model_fails % 3)), 12)
                         print(f"[VLMClient] Retrying in {wait}s...")
                         time.sleep(wait)
                     continue
@@ -450,6 +456,7 @@ class VLMClient:
                     print(f"[VLMClient] Empty array [] from {model_name} (likely safety block). Switching to backup: {self.backup_model}")
                     model_name = self.backup_model
                     payload["model"] = model_name
+                    model_fails = 0  # 백업 모델에서는 다시 카운트 시작
                     time.sleep(2)
                     continue
                 elif len(parsed) == 0 and not darken_retry_done:
@@ -465,6 +472,7 @@ class VLMClient:
                         })
                     payload["messages"] = [{"role": "user", "content": dark_content}]
                     model_name = self.model_name
+                    model_fails = 0  # 메인 모델부터 다시 시작
                     payload["model"] = model_name
                     used_darkened = True
                     time.sleep(2)
@@ -497,6 +505,7 @@ class VLMClient:
                             })
                         payload["messages"] = [{"role": "user", "content": masked_content}]
                         model_name = self.model_name
+                        model_fails = 0  # 메인 모델부터 다시 시작
                         payload["model"] = model_name
                         time.sleep(2)
                         continue
@@ -517,9 +526,10 @@ class VLMClient:
 
             except Exception as e:
                 last_error = str(e)
-                print(f"[VLMClient] Exception on attempt {attempt+1}/10 ({model_name}): {last_error}")
-                if attempt < 9:
-                    wait = min(3 * (2 ** (attempt % 3)), 12)
+                print(f"[VLMClient] Exception on attempt {attempt+1}/15 ({model_name}): {last_error}")
+                model_fails += 1
+                if attempt < 14:
+                    wait = min(3 * (2 ** (model_fails % 3)), 12)
                     print(f"[VLMClient] Retrying in {wait}s...")
                     time.sleep(wait)
                 continue
