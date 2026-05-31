@@ -124,7 +124,7 @@ class AnalysisWorker(QThread):
                     self._check_cancel()
                     self.log.emit("  Phase 1/3: CRAFT text detection filter...")
                     frame_filter = CRAFTFrameFilter(
-                        interval_sec=1.0,
+                        interval_sec=0.3,
                         log_callback=lambda msg: self.log.emit(msg)
                     )
 
