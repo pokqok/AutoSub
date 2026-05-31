@@ -61,10 +61,11 @@ class CRAFTFrameFilter:
         if self.log_callback:
             self.log_callback(msg)
 
-    def has_text(self, frame: np.ndarray) -> Tuple[bool, Optional[Tuple[int, int, int, int]]]:
+    def has_text(self, frame: np.ndarray) -> Tuple[bool, Optional[Tuple[int, int, int, int]], Optional[list]]:
         """
         프레임에서 텍스트 영역이 있는지 감지.
-        반환: (has_text: bool, bbox: (x1, y1, x2, y2) or None)
+        반환: (has_text: bool, bbox: (x1, y1, x2, y2) or None, text_boxes: list or None)
+        text_boxes: 개별 텍스트 박스 목록 [(x1,y1,x2,y2), ...] (원본 해상도 기준)
         """
         # GPU 처리용으로 960x540으로 리사이즈 (세로쓰기 등 얇은 텍스트 감지 개선)
         small = cv2.resize(frame, (960, 540))
@@ -75,24 +76,38 @@ class CRAFTFrameFilter:
             prediction_result = self.craft.detect_text(rgb)
         except ValueError:
             # craft-text-detector 내부에서 inhomogeneous array 버그 발생 시 무시
-            return False, None
+            return False, None, None
 
         if not isinstance(prediction_result, dict):
-            return False, None
+            return False, None, None
         boxes = prediction_result.get("boxes")
 
         if boxes is None or len(boxes) == 0:
-            return False, None
+            return False, None, None
 
-        # 모든 박스를 감싸는 최소 사각형 (640x360 기준)
+        # 960x540 -> 원본 frame 해상도 변환 비율
+        h, w = frame.shape[:2]
+        fx = w / 960.0
+        fy = h / 540.0
+
+        # 개별 텍스트 박스 목록 (각 박스의 bounding rect)
+        text_boxes = []
+        for box in boxes:
+            pts = np.array(box).reshape(-1, 2)
+            bx1, by1 = int(pts[:, 0].min() * fx), int(pts[:, 1].min() * fy)
+            bx2, by2 = int(pts[:, 0].max() * fx), int(pts[:, 1].max() * fy)
+            bx1 = max(0, bx1)
+            by1 = max(0, by1)
+            bx2 = min(w, bx2)
+            by2 = min(h, by2)
+            if (bx2 - bx1) >= 10 and (by2 - by1) >= 10:
+                text_boxes.append((bx1, by1, bx2, by2))
+
+        # 모든 박스를 감싸는 최소 사각형
         all_pts = np.array(boxes).reshape(-1, 2)
         x1, y1 = int(all_pts[:, 0].min()), int(all_pts[:, 1].min())
         x2, y2 = int(all_pts[:, 0].max()), int(all_pts[:, 1].max())
 
-        # 960x540 좌표를 원본 frame 해상도로 변환
-        h, w = frame.shape[:2]
-        fx = w / 960.0
-        fy = h / 540.0
         x1 = int(x1 * fx)
         y1 = int(y1 * fy)
         x2 = int(x2 * fx)
@@ -105,7 +120,7 @@ class CRAFTFrameFilter:
         x2 = min(w, x2 + pad)
         y2 = min(h, y2 + pad)
 
-        return True, (x1, y1, x2, y2)
+        return True, (x1, y1, x2, y2), text_boxes
 
     @staticmethod
     def _is_new_subtitle(roi: np.ndarray, prev_roi: Optional[np.ndarray],
@@ -181,7 +196,7 @@ class CRAFTFrameFilter:
                     new_h = int(h * scale)
                     frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-                found, bbox = self.has_text(frame)
+                found, bbox, text_boxes = self.has_text(frame)
                 
                 # ★ 자막 소멸 마커: 이전에 자막이 있었는데 지금 없으면 무조건 저장
                 if not found:
@@ -243,6 +258,7 @@ class CRAFTFrameFilter:
                     "timestamp": timestamp,
                     "filepath": filepath,
                     "bbox": orig_bbox,
+                    "text_boxes": [tuple(int(v / scale) for v in tb) for tb in text_boxes] if scale != 1.0 and text_boxes else (text_boxes or []),
                     "orig_w": orig_w,
                     "orig_h": orig_h
                 })

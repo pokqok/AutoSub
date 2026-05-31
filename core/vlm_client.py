@@ -367,7 +367,7 @@ class VLMClient:
         crop_retry_done = False
         darken_retry_done = False
         used_darkened = False
-        darken_gamma = 1.5
+        darken_gamma = 2.5
         for attempt in range(10):
             # 3회 이상 실패 시 backup model로 전환
             if attempt >= 3 and self.backup_model and model_name == self.model_name:
@@ -458,19 +458,41 @@ class VLMClient:
                     time.sleep(2)
                     continue
                 elif len(parsed) == 0 and not crop_retry_done:
-                    # 감마 보정도 실패 → bbox 크롭 이미지로 최후 재시도
+                    # 감마 보정도 실패 → 개별 text_boxes 크롭으로 최후 재시도
                     crop_retry_done = True
                     used_darkened = False
+                    # 개별 text_boxes가 있으면 자막 영역만 정밀 크롭
+                    has_text_boxes = any(item.get("text_boxes") for item in frame_batch)
                     has_bbox = any(item.get("bbox") for item in frame_batch)
-                    if has_bbox:
-                        print(f"[VLM-CROP] Darkened also returned []. Retrying with bbox-cropped images...")
+                    if has_text_boxes or has_bbox:
+                        print(f"[VLM-CROP] Darkened also returned []. Retrying with cropped images...")
                         cropped_content = [{"type": "text", "text": prompt_text}]
                         for item in frame_batch:
-                            bbox = item.get("bbox")
-                            if bbox and bbox != (0, 0, 0, 0):
+                            text_boxes = item.get("text_boxes", [])
+                            orig_w = item.get("orig_w", 1920)
+                            orig_h = item.get("orig_h", 1080)
+                            if text_boxes:
+                                # 개별 박스들의 union → 자막 영역만 정밀 크롭
+                                ux1 = min(tb[0] for tb in text_boxes)
+                                uy1 = min(tb[1] for tb in text_boxes)
+                                ux2 = max(tb[2] for tb in text_boxes)
+                                uy2 = max(tb[3] for tb in text_boxes)
+                                # 전체화면 크롭 방지: union이 화면의 50% 이상이면 가장 하단 박스만 사용
+                                union_area = (ux2 - ux1) * (uy2 - uy1)
+                                frame_area = orig_w * orig_h
+                                if union_area > frame_area * 0.5:
+                                    # 가장 하단(y값이 큰) 박스 = 자막일 가능성 높음
+                                    bottom_box = max(text_boxes, key=lambda tb: tb[3])
+                                    crop_bbox = bottom_box
+                                    print(f"[VLM-CROP] Union too large ({union_area}/{frame_area}), using bottom box: {bottom_box}")
+                                else:
+                                    crop_bbox = (ux1, uy1, ux2, uy2)
                                 b64 = self._encode_image_cropped(
-                                    item["filepath"], bbox,
-                                    item.get("orig_w", 1920), item.get("orig_h", 1080)
+                                    item["filepath"], crop_bbox, orig_w, orig_h
+                                )
+                            elif item.get("bbox") and item["bbox"] != (0, 0, 0, 0):
+                                b64 = self._encode_image_cropped(
+                                    item["filepath"], item["bbox"], orig_w, orig_h
                                 )
                             else:
                                 b64 = self._encode_image(item["filepath"])
@@ -484,7 +506,7 @@ class VLMClient:
                         time.sleep(2)
                         continue
                     else:
-                        print(f"[VLM-CROP] No bbox info available. Cannot crop.")
+                        print(f"[VLM-CROP] No bbox/text_boxes info available. Cannot crop.")
                 elif len(parsed) == 0:
                     print(f"[VLMClient] Empty array [] from {model_name}. All fallbacks exhausted.")
 
