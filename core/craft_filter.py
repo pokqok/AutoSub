@@ -164,6 +164,7 @@ class CRAFTFrameFilter:
         prev_roi_img = None
         prev_had_subtitle = False
         prev_bbox = None
+        prev_text_boxes = None
         frame_idx = 0
         saved_count = 0
         skipped_count = 0
@@ -215,16 +216,23 @@ class CRAFTFrameFilter:
                         if scale != 1.0 and prev_bbox:
                             orig_bbox = tuple(int(v / scale) for v in prev_bbox)
                         
+                        # text_boxes는 이전 자막의 개별 박스들을 사용
+                        orig_text_boxes = prev_text_boxes
+                        if scale != 1.0 and prev_text_boxes:
+                            orig_text_boxes = [tuple(int(v / scale) for v in tb) for tb in prev_text_boxes]
+                        
                         saved_frames.append({
                             "timestamp": timestamp,
                             "filepath": filepath,
                             "bbox": orig_bbox,
+                            "text_boxes": orig_text_boxes or [],
                             "orig_w": orig_w,
                             "orig_h": orig_h,
                             "is_disappear": True
                         })
                         saved_count += 1
                         prev_had_subtitle = False
+                        prev_text_boxes = None
                     else:
                         skipped_count += 1
                     continue
@@ -266,6 +274,7 @@ class CRAFTFrameFilter:
                 prev_roi_img = roi
                 prev_had_subtitle = True
                 prev_bbox = bbox
+                prev_text_boxes = text_boxes
 
         finally:
             cap.release()

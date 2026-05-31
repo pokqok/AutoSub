@@ -189,30 +189,42 @@ class VLMClient:
         with open(filepath, 'rb') as f:
             return base64.b64encode(f.read()).decode('utf-8')
 
-    def _encode_image_cropped(self, filepath: str, bbox: tuple, orig_w: int = 1920, orig_h: int = 1080) -> str:
-        """bbox 영역만 크롭하여 base64 인코딩. NSFW 검열 우회 최후 수단."""
-        print(f"[VLM-CROP] reading: {filepath}, bbox={bbox}")
+    def _encode_image_masked(self, filepath: str, text_boxes: list, orig_w: int = 1920, orig_h: int = 1080) -> str:
+        """자막 영역 외의 배경을 모두 검은색으로 마스킹하여 base64 인코딩. NSFW 검열 우회 완벽 차단용."""
+        print(f"[VLM-MASK] reading: {filepath}, {len(text_boxes)} text_boxes")
         if not os.path.exists(filepath):
             raise FileNotFoundError(f"Frame file not found: {filepath}")
+        
         img = Image.open(filepath)
         w, h = img.size
-        x1, y1, x2, y2 = bbox
         scale_x = w / orig_w if orig_w > 0 else 1.0
         scale_y = h / orig_h if orig_h > 0 else 1.0
-        x1 = int(x1 * scale_x)
-        y1 = int(y1 * scale_y)
-        x2 = int(x2 * scale_x)
-        y2 = int(y2 * scale_y)
-        pad_x = int((x2 - x1) * 0.3)
-        pad_y = int((y2 - y1) * 0.3)
-        x1 = max(0, x1 - pad_x)
-        y1 = max(0, y1 - pad_y)
-        x2 = min(w, x2 + pad_x)
-        y2 = min(h, y2 + pad_y)
-        cropped = img.crop((x1, y1, x2, y2))
+        
+        # 완전한 검은색 배경 생성
+        masked_img = Image.new('RGB', (w, h), (0, 0, 0))
+        
+        # 자막 영역(패딩 포함)만 원본에서 복사해오기
+        for box in text_boxes:
+            x1, y1, x2, y2 = box
+            x1 = int(x1 * scale_x)
+            y1 = int(y1 * scale_y)
+            x2 = int(x2 * scale_x)
+            y2 = int(y2 * scale_y)
+            
+            # 패딩 추가
+            pad_x = int((x2 - x1) * 0.3)
+            pad_y = int((y2 - y1) * 0.3)
+            x1 = max(0, x1 - pad_x)
+            y1 = max(0, y1 - pad_y)
+            x2 = min(w, x2 + pad_x)
+            y2 = min(h, y2 + pad_y)
+            
+            # 원본 잘라서 붙이기
+            region = img.crop((x1, y1, x2, y2))
+            masked_img.paste(region, (x1, y1))
+            
         buf = io.BytesIO()
-        cropped.save(buf, format='JPEG', quality=90)
-        print(f"[VLM-CROP] cropped region: ({x1},{y1})-({x2},{y2}), size={cropped.size}")
+        masked_img.save(buf, format='JPEG', quality=90)
         return base64.b64encode(buf.getvalue()).decode('utf-8')
 
     def _encode_image_darkened(self, filepath: str, gamma: float = 1.5) -> str:
@@ -458,55 +470,38 @@ class VLMClient:
                     time.sleep(2)
                     continue
                 elif len(parsed) == 0 and not crop_retry_done:
-                    # 감마 보정도 실패 → 개별 text_boxes 크롭으로 최후 재시도
+                    # 감마 보정도 실패 → 배경 블랙 마스킹으로 최후 재시도
                     crop_retry_done = True
                     used_darkened = False
-                    # 개별 text_boxes가 있으면 자막 영역만 정밀 크롭
                     has_text_boxes = any(item.get("text_boxes") for item in frame_batch)
                     has_bbox = any(item.get("bbox") for item in frame_batch)
                     if has_text_boxes or has_bbox:
-                        print(f"[VLM-CROP] Darkened also returned []. Retrying with cropped images...")
-                        cropped_content = [{"type": "text", "text": prompt_text}]
+                        print(f"[VLM-MASK] Darkened also returned []. Retrying with masked background images...")
+                        masked_content = [{"type": "text", "text": prompt_text}]
                         for item in frame_batch:
                             text_boxes = item.get("text_boxes", [])
                             orig_w = item.get("orig_w", 1920)
                             orig_h = item.get("orig_h", 1080)
+                            if not text_boxes and item.get("bbox") and item["bbox"] != (0, 0, 0, 0):
+                                text_boxes = [item["bbox"]]
+                            
                             if text_boxes:
-                                # 개별 박스들의 union → 자막 영역만 정밀 크롭
-                                ux1 = min(tb[0] for tb in text_boxes)
-                                uy1 = min(tb[1] for tb in text_boxes)
-                                ux2 = max(tb[2] for tb in text_boxes)
-                                uy2 = max(tb[3] for tb in text_boxes)
-                                # 전체화면 크롭 방지: union이 화면의 50% 이상이면 가장 하단 박스만 사용
-                                union_area = (ux2 - ux1) * (uy2 - uy1)
-                                frame_area = orig_w * orig_h
-                                if union_area > frame_area * 0.5:
-                                    # 가장 하단(y값이 큰) 박스 = 자막일 가능성 높음
-                                    bottom_box = max(text_boxes, key=lambda tb: tb[3])
-                                    crop_bbox = bottom_box
-                                    print(f"[VLM-CROP] Union too large ({union_area}/{frame_area}), using bottom box: {bottom_box}")
-                                else:
-                                    crop_bbox = (ux1, uy1, ux2, uy2)
-                                b64 = self._encode_image_cropped(
-                                    item["filepath"], crop_bbox, orig_w, orig_h
-                                )
-                            elif item.get("bbox") and item["bbox"] != (0, 0, 0, 0):
-                                b64 = self._encode_image_cropped(
-                                    item["filepath"], item["bbox"], orig_w, orig_h
+                                b64 = self._encode_image_masked(
+                                    item["filepath"], text_boxes, orig_w, orig_h
                                 )
                             else:
                                 b64 = self._encode_image(item["filepath"])
-                            cropped_content.append({
+                            masked_content.append({
                                 "type": "image_url",
                                 "image_url": {"url": f"data:image/jpeg;base64,{b64}"}
                             })
-                        payload["messages"] = [{"role": "user", "content": cropped_content}]
+                        payload["messages"] = [{"role": "user", "content": masked_content}]
                         model_name = self.model_name
                         payload["model"] = model_name
                         time.sleep(2)
                         continue
                     else:
-                        print(f"[VLM-CROP] No bbox/text_boxes info available. Cannot crop.")
+                        print(f"[VLM-MASK] No bbox/text_boxes info available. Cannot mask.")
                 elif len(parsed) == 0:
                     print(f"[VLMClient] Empty array [] from {model_name}. All fallbacks exhausted.")
 
